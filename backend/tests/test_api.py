@@ -47,6 +47,17 @@ class ApiTests(unittest.TestCase):
         other=self.client.post('/api/jobs',json=body,headers={**headers,'idempotency-key':'other'})
         self.assertEqual(other.status_code,409)
 
+    def test_legacy_job_idempotency_defaults_to_220(self):
+        headers=self.login();data=io.BytesIO();Image.new('RGB',(16,16)).save(data,format='PNG')
+        item=self.client.post('/api/inputs',files={'image':('a.png',data.getvalue(),'image/png')},headers=headers).json()
+        payload={'input_id':item['input_id'],'prompt':'test','seed':None,'preset':'trial'}
+        old,_=self.client.app.state.jobs.create('legacy-resolution',payload)
+        response=self.client.post('/api/jobs',json=payload,headers={**headers,'idempotency-key':'legacy-resolution'})
+        self.assertEqual(response.status_code,202);self.assertEqual(response.json()['job_id'],old['id'])
+        conflict=self.client.post('/api/jobs',json={**payload,'spatial_tokens':880},headers={**headers,'idempotency-key':'legacy-resolution'})
+        self.assertEqual(conflict.status_code,409)
+        self.assertEqual(self.client.get('/api/jobs/'+old['id']).json()['spatial_tokens'],220)
+
     def test_resolution_values_and_legacy(self):
         from dreamx.api import JobRequest
         from pydantic import ValidationError
