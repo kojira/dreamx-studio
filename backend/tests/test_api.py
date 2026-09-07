@@ -47,6 +47,18 @@ class ApiTests(unittest.TestCase):
         other=self.client.post('/api/jobs',json=body,headers={**headers,'idempotency-key':'other'})
         self.assertEqual(other.status_code,409)
 
+    def test_resolution_values_and_legacy(self):
+        from dreamx.api import JobRequest
+        from pydantic import ValidationError
+        for value in (220,440,880):
+            self.assertEqual(JobRequest(input_id='test',prompt='x',spatial_tokens=value).spatial_tokens,value)
+        self.assertEqual(JobRequest(input_id='test',prompt='x').spatial_tokens,220)
+        for value in ('880',880.0,True):
+            with self.assertRaises(ValidationError):JobRequest(input_id='test',prompt='x',spatial_tokens=value)
+        headers=self.login()
+        response=self.client.post('/api/jobs',json={'input_id':'test','prompt':'x','spatial_tokens':999},headers={**headers,'idempotency-key':'invalid-token'})
+        self.assertEqual(response.status_code,422)
+
     def test_invalid_upload(self):
         headers=self.login()
         r=self.client.post('/api/inputs',files={'image':('bad.png',b'not an image','image/png')},headers=headers)

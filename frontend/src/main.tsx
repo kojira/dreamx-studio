@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client';
 import './style.css';
 
 type Status={runtime_ready:boolean;reason?:string;available_gib?:number;active_job_id?:string|null};
-type Job={id:string;state:string;error_code?:string;created_at:string;elapsed_seconds?:number;progress?:{phase:string;step?:number;total_steps?:number;percent?:number}};
+type Job={id:string;state:string;error_code?:string;created_at:string;spatial_tokens?:number;elapsed_seconds?:number;progress?:{phase:string;step?:number;total_steps?:number;percent?:number}};
 const phases:Record<string,string>={preparing:'モデル準備・前処理中',generating:'動画・音声を生成中',encoding_output:'動画を書き出し中',update_pending:'進捗の更新待ち',succeeded:'生成完了',failed:'生成失敗',cancelled:'キャンセル済み',interrupted:'中断',cancelling:'停止処理中'};
 const terminal=new Set(['succeeded','failed','cancelled','interrupted']);
 function App(){
@@ -11,6 +11,7 @@ function App(){
  const [status,setStatus]=useState<Status|null>(null),[job,setJob]=useState<Job|null>(null),[history,setHistory]=useState<Job[]>([]);
  const [file,setFile]=useState<File|null>(null),[preview,setPreview]=useState(''),[prompt,setPrompt]=useState(''),[busy,setBusy]=useState(false);
  const [seed,setSeed]=useState('');
+ const [spatialTokens,setSpatialTokens]=useState(880);
  async function api(path:string,init:RequestInit={}){
   const response=await fetch('/api'+path,{...init,headers:{...init.headers,'x-csrf-token':csrf}});
   const data=await response.json();
@@ -34,7 +35,7 @@ function App(){
  useEffect(()=>{void connect();},[]);
  async function generate(e:React.FormEvent){e.preventDefault();if(!file)return;setBusy(true);setError('');try{
   const body=new FormData();body.append('image',file);const input=await api('/inputs',{method:'POST',body});
-  const j=await api('/jobs',{method:'POST',headers:{'content-type':'application/json','idempotency-key':crypto.randomUUID()},body:JSON.stringify({input_id:input.input_id,prompt,seed:seed===''?null:Number(seed),preset:'trial'})});
+  const j=await api('/jobs',{method:'POST',headers:{'content-type':'application/json','idempotency-key':crypto.randomUUID()},body:JSON.stringify({input_id:input.input_id,prompt,seed:seed===''?null:Number(seed),preset:'trial',spatial_tokens:spatialTokens})});
   setJob(await api('/jobs/'+j.job_id));
  }catch(e){setError(String(e));}finally{setBusy(false);}}
  const running=!!job&&!terminal.has(job.state);
@@ -46,9 +47,11 @@ function App(){
  {preview&&<img className="preview" src={preview} alt="入力画像"/>}
  <label>映像・音声のプロンプト<textarea value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={4000} rows={5} required placeholder="シーン、動き、聞こえる音を説明してください"/></label>
  <label>シード（空欄でランダム）<input type="number" min="0" max="2147483647" step="1" value={seed} onChange={e=>setSeed(e.target.value)}/></label>
- <p>低負荷プリセット：220空間トークン・69フレーム（約2.88秒）・50ステップ。2K化は未対応。</p>
+ <label>解像度設定<select value={spatialTokens} onChange={e=>setSpatialTokens(Number(e.target.value))}><option value={220}>軽量 — 220トークン</option><option value={440}>中間 — 440トークン</option><option value={880}>公式 — 880トークン</option></select></label>
+ <p>69フレーム（約2.88秒）・50ステップ。実際の縦横サイズは画像に合わせます。高解像度ほどRAMと時間を使います。2K化は未対応。</p>
  <button disabled={busy||running||!status?.runtime_ready||!file||!prompt.trim()}>音声付き動画を生成</button></form>
  {job&&<section><h2>{phases[job.state==='cancelling'?'cancelling':job.progress?.phase||job.state]||job.state}</h2>
+ {job.spatial_tokens!==undefined&&<p>この生成：{job.spatial_tokens}トークン</p>}
  {job.elapsed_seconds!==undefined&&<p>経過：{Math.floor(job.elapsed_seconds/60)}分{job.elapsed_seconds%60}秒</p>}
  {job.progress?.step!==undefined&&job.progress.total_steps!==undefined&&<><progress value={job.progress.step} max={job.progress.total_steps}/><p>{job.progress.step} / {job.progress.total_steps} ステップ（{job.progress.percent}%）</p></>}
  {running&&job.progress?.phase==='preparing'&&<p>読み込み・前処理には数分かかる場合があります。生成ステップが始まると進捗を表示します。</p>}

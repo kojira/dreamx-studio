@@ -28,6 +28,7 @@ class JobRequest(BaseModel):
     prompt: str=Field(min_length=1,max_length=4000)
     seed: int|None=Field(default=None,ge=0,le=2147483647,strict=True)
     preset: str='trial'
+    spatial_tokens: int=Field(default=220,strict=True)
 
 
 def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
@@ -108,7 +109,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
     async def create_job(request:Request):
         try:
             body=JobRequest.model_validate_json(await bounded_body(request,32*1024))
-            if not body.prompt.strip() or body.preset!='trial': raise ValueError('Invalid preset or prompt')
+            if not body.prompt.strip() or body.preset!='trial' or body.spatial_tokens not in (220,440,880): raise ValueError('Invalid preset or prompt')
             if not id_path(inputs,body.input_id,'.png').is_file(): raise ValueError('Input missing')
         except ValueError: raise HTTPException(422,'INVALID_REQUEST')
         request_id=request.headers.get('idempotency-key','')
@@ -118,7 +119,8 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
         with jobs.connect() as db:
             prior=db.execute('SELECT * FROM jobs WHERE request_id=?',(request_id,)).fetchone()
         if prior:
-            if json.loads(prior['payload'])!=payload:raise HTTPException(409,'IDEMPOTENCY_CONFLICT')
+            previous=json.loads(prior['payload']);previous.setdefault('spatial_tokens',220)
+            if previous!=payload:raise HTTPException(409,'IDEMPOTENCY_CONFLICT')
             return {'job_id':prior['id'],'state':prior['state']}
         availability=runner.status()
         if availability.get('reason')=='BUSY':raise HTTPException(409,'BUSY')
@@ -144,6 +146,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
     def detail(job_id:str):
         try: job=jobs.get(job_id)
         except KeyError: raise HTTPException(404,'NOT_FOUND')
+        job['spatial_tokens']=json.loads(job['payload']).get('spatial_tokens',220)
         terminal=job['state'] in ('succeeded','failed','cancelled','interrupted')
         end=datetime.fromisoformat(job['updated_at']) if terminal else datetime.now(timezone.utc)
         job['elapsed_seconds']=max(0,int((end-datetime.fromisoformat(job['created_at'])).total_seconds()))

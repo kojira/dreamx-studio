@@ -23,7 +23,7 @@ Issue #1, approved design v1. Branch feat/dreamx-studio-v1.
 - Target runtime image dreamx-studio-runtime:v1-matched-libs digest09392e867213d7fe759acbe98a0066be1ef2ea978fcb29ab52098691f6e7f03b. Always inspect live state before operational changes; user is actively testing.
 
 ## Not yet done / safe next actions
-1. User verification in progress; no PR/merge approval yet. Avoid duplicate test jobs while user is using the UI.
+1. User verification found severe face/mouth distortion in a generated trial. Runtime success is NOT quality acceptance. User approved v1.4 resolution selection220/440/880 with UI default880; deployed as dreamx-studio-ui:v1-resolution. API strictly validates tokens and retains220 when omitted by old clients; worker uses persisted value.35 tests/build and real browser option/default checks pass.50 steps and memory guards unchanged. Actual880 generation/quality comparison remains unverified; do not claim quality acceptance yet. No PR/merge approval. Avoid duplicate jobs or sharing private inputs/outputs.
 2. Guardian natural-exit handling improvement deployed during verified idle window. New guardian process emitted its own healthy heartbeat before old guardian was stopped, preserving overlapping protection. Inference/UI/runner were not restarted for this replacement.
 3. Commit/push safe sources and sanitized evidence; do not create PR without user approval.
 4. Runtime is manually started, not an installed boot service. Preserve stopped test/UI containers; no cleanup was authorized.
