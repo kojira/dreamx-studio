@@ -1,6 +1,18 @@
 # Implementation checkpoint
 
-Issue #1, approved design v1. Branch feat/dreamx-studio-v1.
+Issue #1. Branch feat/dreamx-studio-v1.
+
+## Current handoff — takes precedence over historical milestones below
+
+- Base880 generation succeeded in19m02s; user visual-quality acceptance and PR/merge approval remain outstanding.
+- Refiner weights downloaded and hash verified (see REFINER-DOWNLOAD.md). Standalone testing was subsequently authorized; it is no longer merely a download-only request.
+- First Refiner test failed on upstream missing FlashAttention. Approved bounded SDPA compatibility patch and CPU/GPU primitive checks passed; second full trial failed on the existing72GiB worker-memory guard, exit137/OOMKilled=false, host availability~55GiB. Refiner output has NOT succeeded.39 local tests passed before that trial.
+- Both trial workers exited and released their reservations. Original source video checksum was verified unchanged after both failures. Do not launch duplicate trials.
+- User challenged the residual memory limits. DESIGN-v1.8-memory-policy.md proposes removing72GiB-triggered kills and raising Docker80→112GiB while retaining actual24GiB host stop, zero swap, heartbeats and180minute timeout. **Explicit approval is still outstanding; v1.8 is NOT implemented/deployed.**
+- mmap candidate REFINER-TEST-v1.2-mmap.md is paused and unapplied. Current approved SDPA patch remains test-only; no production generator image changes.
+- Task24 remains enabled per user instruction. A scheduler wake is not approval. Do not stop the heartbeat, relax safety, restart services, or label the task complete while this decision is unresolved. Runtime/source preservation evidence and a read-only deployment inventory have been prepared; no GPU test is currently being run by this agent.
+
+## Historical milestones (not current operational status)
 
 ## Done
 - Documentation baseline and workflow rules.
