@@ -30,7 +30,7 @@ def guarded_path(value):
 def sample_guard(root:Path):
     """One sample; returning an abort request does not claim kill succeeded."""
     now=time.monotonic(); available=memory_available(Path('/proc/meminfo').read_text())
-    result={'at':now,'available':available,'container_id':None,'reason':None}
+    result={'at':now,'guardian_pid':os.getpid(),'available':available,'container_id':None,'reason':None}
     active_path=root/'active.json'
     if not active_path.exists(): return result,None
     active=load(active_path)
@@ -72,6 +72,7 @@ def main():
     while True:
         try:
             result,active=sample_guard(root)
+            atomic_json(root/f'guardian-health-{os.getpid()}.json',{'at':result['at'],'pid':os.getpid()})
             if active:
                 history.append((result['at'],result['available']))
                 while len(history)>1 and result['at']-history[0][0]>1: history.popleft()

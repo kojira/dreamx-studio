@@ -24,7 +24,7 @@ Issue #1, approved design v1. Branch feat/dreamx-studio-v1.
 
 ## Not yet done / safe next actions
 1. User verification in progress; no PR/merge approval yet. Avoid duplicate test jobs while user is using the UI.
-2. Local improvement avoids falsely classifying natural worker cgroup disappearance as telemetry failure; tests pass. This guardian-only change is not yet deployed to running guardian. Deploy only during verified idle window; never restart host runner/guardian during a user job.
+2. Guardian natural-exit handling improvement deployed during verified idle window. New guardian process emitted its own healthy heartbeat before old guardian was stopped, preserving overlapping protection. Inference/UI/runner were not restarted for this replacement.
 3. Commit/push safe sources and sanitized evidence; do not create PR without user approval.
 4. Runtime is manually started, not an installed boot service. Preserve stopped test/UI containers; no cleanup was authorized.
 
