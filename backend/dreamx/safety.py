@@ -30,7 +30,7 @@ def admission(sample: Sample, *, runtime_ready: bool, active: bool) -> str | Non
 def emergency(sample: Sample) -> str | None:
     if not math.isfinite(sample.guardian_age) or not 0 <= sample.guardian_age <= 2:
         return "GUARDIAN_LOST"
-    if sample.available < 32 * GIB:
+    if sample.available < 48 * GIB:
         return "HOST_MEMORY_GUARD"
     if sample.worker_memory is None or sample.worker_memory < 0:
         return "WORKER_TELEMETRY_LOST"
