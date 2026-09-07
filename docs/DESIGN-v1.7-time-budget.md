@@ -1,0 +1,7 @@
+# v1.7 — longer generation time budget
+
+User explicitly rejected losing the current880 generation to the60-minute timeout after noting the96-minute naive scaling estimate. Extend the wall-clock limit from60 to180minutes, measured from the original start time, for current and subsequent jobs. Parent announced this exact change before implementation. Do not restart/reset the active inference process or its start timestamp. Keep actual24GiB host reserve, cgroup/worker caps and heartbeat safeguards unchanged.
+
+Deploy by starting the updated host guardian and checking its fresh heartbeat/active-job identity before stopping the prior guardian. This targeted live guardian replacement is authorized by the user's instruction to preserve the active generation and overrides the earlier idle-only restriction for this timeout change. No worker/runner/UI restart. Align the pure guard primitive and operator SSH observer for future launches; do not accidentally kill a job when restarting an observation-only process.
+
+Test that a job older than60minutes but younger than180minutes does not time out, >=180minutes does, and memory/heartbeat guards remain active. Verify active worker container ID and StartedAt unchanged after deployment. A runtime estimate is not a guarantee; if the current job approaches120minutes, seek the user's next decision well before the180-minute limit rather than silently dropping work.

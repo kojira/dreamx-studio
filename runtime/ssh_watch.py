@@ -13,7 +13,7 @@ assert str(uuid.UUID(a.job))==a.job
 base=['ssh','-o','BatchMode=yes','-o','ConnectTimeout=2',a.target]
 read="python3 -c "+shlex.quote('from pathlib import Path;print((Path.home()/"dreamx-studio-runtime/control/guard-status.json").read_text())')
 kill="PYTHONPATH=$HOME/dreamx-studio-runtime/build python3 -c "+shlex.quote(f'from dreamx.docker_control import kill_job;kill_job({a.container!r},{a.job!r})')
-failures=0;deadline=time.monotonic()+3600
+failures=0;deadline=time.monotonic()+10800
 while time.monotonic()<deadline:
     started=time.monotonic()
     try:

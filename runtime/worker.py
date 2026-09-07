@@ -46,7 +46,28 @@ args=['python','inference.py','--model_name','/weights/wan2.2_ti2v_5b',
       '--num_inference_steps','4' if spec['preset']=='smoke' else '50',
       '--target_spatial_tokens',str(spatial_tokens),'--weight_dtype','bfloat16',
       '--text_encoder_cpu_offload','--vae_cpu_offload','--seed',str(spec['seed'])]
-child=subprocess.Popen(args,start_new_session=True)
+# Bound diagnostic metadata only (never tensor contents or user prompts).
+# This preserves the selected algorithm and identifies a stalled attention call.
+trace_launcher='''import sys,runpy,time,json,torch
+from torch.nn import functional as F
+original=F.scaled_dot_product_attention
+calls=0
+def traced(q,k,v,*args,**kwargs):
+    global calls
+    calls+=1
+    trace=calls<=200
+    if trace:
+        mask=kwargs.get("attn_mask")
+        print("SDPA_START "+json.dumps({"call":calls,"q":list(q.shape),"k":list(k.shape),"dtype":str(q.dtype),"stride":list(q.stride()),"mask":None if mask is None else {"shape":list(mask.shape),"dtype":str(mask.dtype)}}),flush=True)
+    started=time.monotonic()
+    result=original(q,k,v,*args,**kwargs)
+    if trace: print("SDPA_RETURN "+json.dumps({"call":calls,"dispatch_seconds":time.monotonic()-started}),flush=True)
+    return result
+F.scaled_dot_product_attention=traced
+sys.argv=sys.argv[1:]
+runpy.run_path(sys.argv[0],run_name="__main__")
+'''
+child=subprocess.Popen(['python','-u','-c',trace_launcher,*args[1:]],start_new_session=True)
 while child.poll() is None:
     try: healthy=heartbeat_ok()
     except Exception: healthy=False

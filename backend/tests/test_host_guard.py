@@ -31,6 +31,19 @@ class HostGuardTests(unittest.TestCase):
             result,active=sample_guard(Path('/virtual'))
         self.assertIsNone(result['reason']);self.assertTrue(result['worker_exited']);self.assertIsNone(active)
 
+    def test_extended_time_budget(self):
+        age=[3600]
+        def read(path,*args,**kwargs):
+            if str(path)=='/proc/meminfo':return 'MemAvailable: 100000000 kB'
+            if path.name=='active.json':return json.dumps({'container_id':'a'*64,'job_id':'test','cgroup':'/sys/fs/cgroup/test','started_at':20000-age[0]})
+            if path.name=='runner-heartbeat.json':return json.dumps({'at':20000})
+            if path.name=='memory.current':return str(20*GIB)
+            raise FileNotFoundError()
+        with patch.object(Path,'read_text',autospec=True,side_effect=read),patch.object(Path,'exists',return_value=True),patch('time.monotonic',return_value=20000):
+            for elapsed in (3600,6000,10799):
+                age[0]=elapsed;self.assertIsNone(sample_guard(Path('/virtual'))[0]['reason'])
+            age[0]=10800;self.assertEqual(sample_guard(Path('/virtual'))[0]['reason'],'TIME_LIMIT')
+
     def test_no_path_escape(self):
         for value in ['/tmp','/sys/fs/cgroup/../../etc','relative']:
             with self.assertRaises(ValueError):guarded_path(value)

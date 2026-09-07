@@ -18,11 +18,18 @@ def main():
                 c=inspect_job(active['container_id'],active['job_id'])
                 # subprocess stderr carries tqdm; execute() returns only stdout.
                 import subprocess
-                r=subprocess.run(['docker','logs','--tail','100',c['Id']],capture_output=True,text=True,timeout=3)
+                r=subprocess.run(['docker','logs','--tail','1000',c['Id']],capture_output=True,text=True,timeout=3)
                 if r.returncode==0:
                     progress=parse_progress(r.stdout+'\n'+r.stderr)
-                    progress['at']=time.time()
                     output=id_path(root/'app/jobs',active['job_id'])
+                    # A busy log tail must not erase an already observed step.
+                    if progress.get('phase')=='preparing':
+                        try:
+                            previous=json.loads((output/'progress.json').read_text())
+                            if previous.get('phase') in ('generating','encoding_output'):
+                                progress=previous
+                        except (OSError,ValueError):pass
+                    progress['at']=time.time()
                     atomic_json(output/'progress.json',progress)
         except Exception:
             # Missing/stale progress is visible as such; observer errors must never

@@ -44,7 +44,7 @@ def sample_guard(root:Path):
         result['worker_memory']=used
         if available<24*GIB: result['reason']='HOST_MEMORY_GUARD'
         if used>=72*GIB: result['reason']='WORKER_MEMORY_GUARD'
-        if now-float(active['started_at'])>=3600: result['reason']='TIME_LIMIT'
+        if now-float(active['started_at'])>=10800: result['reason']='TIME_LIMIT'
     except Exception:
         # A naturally exited worker loses its cgroup; that is not a memory abort.
         try:

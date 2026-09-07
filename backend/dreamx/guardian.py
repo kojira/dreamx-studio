@@ -26,7 +26,7 @@ def guard_job(
     clock: Callable[[], float] = time.monotonic,
 ) -> str:
     target = exact_container_id(container_id)
-    deadline = clock() + 3600
+    deadline = clock() + 10800
     while running():
         try:
             reason = emergency(observe())

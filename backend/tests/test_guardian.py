@@ -28,7 +28,7 @@ class GuardianTests(unittest.TestCase):
         event.assert_not_called()
 
     def test_timeout(self):
-        clock = Mock(side_effect=[0, 3600]); kill = Mock()
+        clock = Mock(side_effect=[0, 10800]); kill = Mock()
         self.assertEqual(guard_job('b'*64, lambda: Sample(100*GIB,200*GIB,1,0),lambda:True,kill,clock=clock), 'TIME_LIMIT')
 
     @patch('dreamx.guardian.subprocess.run')
