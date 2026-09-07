@@ -26,6 +26,7 @@ while True:
     if time.monotonic()-start>30:raise SystemExit('GUARD_START_TIMEOUT')
     time.sleep(.1)
 env={**os.environ,'INPUT':'/input.mp4','OUTPUT':'/job/refined','NUM_FRAMES':'-1','SR_SCALE':'2.0','SEED':'42','ENABLE_FP8':'0','ENABLE_NU_LIGHTVAE':'0'}
+if os.environ.get('REFINER_TARGET1080')=='1':env['SR_SCALE']=str(1088/704)
 command=['bash','run_inference.sh']
 if os.environ.get('CHECK_REFINER_ATTENTION')=='1':
     command=['bash','-c','python /opt/check_refiner_attention.py /opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py --cuda && exec bash run_inference.sh']

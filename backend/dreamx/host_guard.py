@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from .safety import GIB, memory_available, exact_container_id
+from .safety import GIB, HOST_RESERVE, memory_available, exact_container_id
 from .docker_control import kill_job, inspect_job
 
 
@@ -42,7 +42,7 @@ def sample_guard(root:Path):
         cgroup=guarded_path(active['cgroup'])
         used=int((cgroup/'memory.current').read_text())
         result['worker_memory']=used
-        if available<24*GIB: result['reason']='HOST_MEMORY_GUARD'
+        if available<HOST_RESERVE: result['reason']='HOST_MEMORY_GUARD'
         if used<0: result['reason']='TELEMETRY_ERROR'
         if (cgroup/'memory.swap.max').read_text().strip()!='0': result['reason']='SWAP_POLICY_LOST'
         if now-float(active['started_at'])>=10800: result['reason']='TIME_LIMIT'

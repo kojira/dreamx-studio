@@ -11,14 +11,18 @@ from dreamx.paths import id_path
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);p.add_argument('--attention-patch',type=Path);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);p.add_argument('--attention-patch',type=Path);p.add_argument('--target1080',action='store_true');a=p.parse_args()
+    if a.target1080:assert a.attention_patch,'1080 trial requires the verified attention patch'
     if a.attention_patch:
         a.attention_patch=a.attention_patch.resolve()
         assert hashlib.sha256(a.attention_patch.read_bytes()).hexdigest()=='9104decd2574690d397438e59eaf87e54e1bd6c2c695adfc0c45c01b06a14ab7','Unexpected attention patch'
-    trial='v1.9-sdpa' if a.attention_patch else 'v1.9'
+    trial='v1.10-1080-sdpa' if a.target1080 else ('v1.11-sdpa' if a.attention_patch else 'v1.11')
     root=a.root.resolve();os.umask(0o077);jobs=Jobs(root/'app/jobs.sqlite')
     source_job=jobs.get(a.source_job);assert source_job['state']=='succeeded'
     source=id_path(root/'app/jobs',a.source_job)/'output.mp4'
+    if a.target1080:
+        srcmeta=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(source)],text=True,timeout=15))['streams'][0]
+        assert (srcmeta['width'],srcmeta['height'],int(srcmeta['nb_frames']),srcmeta['avg_frame_rate'])==(1248,704,69,'24/1'),'Unsupported1080 test input'
     with source.open('rb') as f:original_sha=hashlib.file_digest(f,'sha256').hexdigest()
     assert not load(root/'control/active.json').get('container_id'),'User job active'
     guard=load(root/'control/guard-status.json')
@@ -31,7 +35,7 @@ def main():
     output=id_path(root/'app/jobs',jid)
     try:
         output.mkdir(mode=0o700,exist_ok=False);control=root/'evidence'/('refiner-control-'+jid);control.mkdir(mode=0o700,exist_ok=False)
-        atomic_json(output/'spec.json',{'job_id':jid,'source_job':a.source_job,'kind':'operator-refiner2x','source_sha256':original_sha})
+        atomic_json(output/'spec.json',{'job_id':jid,'source_job':a.source_job,'kind':'operator-refiner1080' if a.target1080 else 'operator-refiner2x','source_sha256':original_sha})
         atomic_json(control/'active.json',{'container_id':None})
         def heartbeat():
             while not heartbeat_stop.is_set():
@@ -48,6 +52,7 @@ def main():
         for env in ['USER=dreamx','HOME=/tmp','PYTHONPATH=/deps','TORCHINDUCTOR_CACHE_DIR=/tmp/dreamx-inductor','HF_HUB_OFFLINE=1','TRANSFORMERS_OFFLINE=1']:
             args+=['--env',env]
         if a.attention_patch:args+=['--env','CHECK_REFINER_ATTENTION=1']
+        if a.target1080:args+=['--env','REFINER_TARGET1080=1']
         for typ,src,dst,rw in mounts:args+=['--mount',f'type={typ},src={src},dst={dst}'+('' if rw else ',readonly')]
         args+=[image,'python','/opt/refiner_test_worker.py']
         atomic_json(output/'launch.json',{'image':image,'argv':args})
@@ -75,16 +80,22 @@ def main():
         assert not c['State']['OOMKilled'] and c['State']['ExitCode']==0,'Refiner exited unsuccessfully'
         jobs.transition(jid,'muxing');results=list((output/'refined').glob('*.mp4'));assert len(results)==1,'Expected exactly one output'
         video=results[0]
+        if a.target1080:
+            raw=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(video)],text=True,timeout=15))['streams'][0]
+            assert (raw['width'],raw['height'])==(1920,1088),'Unexpected internal target size'
+            final=output/'final1080.mp4'
+            subprocess.run(['ffmpeg','-nostdin','-n','-v','error','-i',str(video),'-map','0:v:0','-map','0:a:0','-vf','scale=1914:1080:flags=lanczos,pad=1920:1080:(ow-iw)/2:0,setsar=1','-c:v','libx264','-crf','18','-preset','fast','-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart',str(final)],check=True,capture_output=True,timeout=120)
+            video=final
         media=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(video)],text=True,timeout=15))
         v=next(s for s in media['streams'] if s['codec_type']=='video')
-        assert (v['width'],v['height'])==(2496,1408) and int(v['nb_frames'])==69
+        assert (v['width'],v['height'])==((1920,1080) if a.target1080 else (2496,1408)) and int(v['nb_frames'])==69
         assert v['avg_frame_rate']=='24/1' and abs(float(media['format']['duration'])-69/24)<=1/24
         assert any(s['codec_type']=='audio' for s in media['streams'])
         def audio_hash(path):return subprocess.check_output(['ffmpeg','-v','error','-i',str(path),'-map','0:a:0','-c','copy','-f','hash','-hash','sha256','-'],text=True,timeout=20).strip()
         assert audio_hash(source)==audio_hash(video),'Audio stream changed'
         with source.open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==original_sha
         os.link(video,output/'output.mp4')
-        atomic_json(output/'evidence.json',{'kind':'operator-refiner2x','source_sha256':original_sha,'elapsed_seconds':time.monotonic()-started,'media':media,'image_id':image,'audio_stream_unchanged':True})
+        atomic_json(output/'evidence.json',{'kind':'operator-refiner1080' if a.target1080 else 'operator-refiner2x','source_sha256':original_sha,'elapsed_seconds':time.monotonic()-started,'media':media,'image_id':image,'audio_stream_unchanged':True})
         jobs.transition(jid,'succeeded');print('REFINER_TEST_SUCCEEDED',flush=True)
     except Exception as e:
         failure=type(e).__name__+': '+str(e);print(failure,flush=True)

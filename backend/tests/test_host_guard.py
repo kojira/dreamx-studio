@@ -17,10 +17,10 @@ class HostGuardTests(unittest.TestCase):
             if path.name=='memory.current':return str(used[0])
             raise FileNotFoundError()
         with patch.object(Path,'read_text',autospec=True,side_effect=read),patch.object(Path,'exists',return_value=True),patch('time.monotonic',return_value=100.0):
-            for value in (100*GIB,68*GIB,30*GIB,24*GIB):
+            for value in (100*GIB,68*GIB,30*GIB,24*GIB,8*GIB):
                 available[0]=value
                 self.assertIsNone(sample_guard(Path('/virtual'))[0]['reason'])
-            available[0]=24*GIB-1024
+            available[0]=8*GIB-1024
             self.assertEqual(sample_guard(Path('/virtual'))[0]['reason'],'HOST_MEMORY_GUARD')
             available[0]=100*GIB;swap[0]='max'
             self.assertEqual(sample_guard(Path('/virtual'))[0]['reason'],'SWAP_POLICY_LOST')

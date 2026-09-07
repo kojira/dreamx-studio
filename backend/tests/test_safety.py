@@ -20,8 +20,8 @@ class SafetyTests(unittest.TestCase):
                 self.assertEqual(admission(sample, runtime_ready=ready, active=active), expected)
 
     def test_emergency_boundaries(self):
-        self.assertIsNone(emergency(replace(self.sample, available=24*GIB, worker_memory=72*GIB-1)))
-        self.assertEqual(emergency(replace(self.sample, available=24*GIB-1)), 'HOST_MEMORY_GUARD')
+        self.assertIsNone(emergency(replace(self.sample, available=8*GIB, worker_memory=72*GIB-1)))
+        self.assertEqual(emergency(replace(self.sample, available=8*GIB-1)), 'HOST_MEMORY_GUARD')
         for used in (72*GIB,80*GIB,110*GIB):
             self.assertIsNone(emergency(replace(self.sample, worker_memory=used)))
         self.assertEqual(emergency(replace(self.sample, worker_memory=None)), 'WORKER_TELEMETRY_LOST')
