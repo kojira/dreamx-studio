@@ -15,5 +15,9 @@ Admission96GiB available and150GiB free disk. Container80GiB/no swap, cgroup sto
 
 Output goes to a new private per-test directory, with read-only weights/source clip and no network/GPU model concurrency. Retain logs, resource samples, exact image and argv, source checksum, and ffprobe evidence. Only release the shared slot after confirming exact worker exit. Supervisor failure must leave reservation locked until reconciliation; do not falsely report success.
 
+## Recorded first-trial result
+
+Failed at the upstream missing-FlashAttention assertion (exit1, OOMKilled=false), not a manual interruption or memory-guard event. Container runtime117.695seconds;229 resource samples, minimum host availability31.870GiB, maximum cgroup65.954GiB, no sampled guard reason. This does NOT establish that later refinement/decoding stages fit in memory. Preserve all safety limits on any approved retry. The proposed compatibility remedy is in `REFINER-TEST-v1.1-sdpa.md`; approval is outstanding, no patch or retry has been performed.
+
 ## Acceptance
 Verify valid playable video,2496x1408 dimensions,69frames/24fps, duration within one frame of source, audio retained and source checksum unchanged. Record elapsed time, minimum sampled host available RAM and maximum cgroup usage, exit/OOM status. A valid output does not establish visual improvement; provide result for user evaluation. Any output/frame/audio mismatch is a test failure, not something to silently trim or conceal.
