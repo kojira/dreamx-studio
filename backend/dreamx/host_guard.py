@@ -43,7 +43,8 @@ def sample_guard(root:Path):
         used=int((cgroup/'memory.current').read_text())
         result['worker_memory']=used
         if available<24*GIB: result['reason']='HOST_MEMORY_GUARD'
-        if used>=72*GIB: result['reason']='WORKER_MEMORY_GUARD'
+        if used<0: result['reason']='TELEMETRY_ERROR'
+        if (cgroup/'memory.swap.max').read_text().strip()!='0': result['reason']='SWAP_POLICY_LOST'
         if now-float(active['started_at'])>=10800: result['reason']='TIME_LIMIT'
     except Exception:
         # A naturally exited worker loses its cgroup; that is not a memory abort.

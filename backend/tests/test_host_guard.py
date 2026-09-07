@@ -8,12 +8,13 @@ from dreamx.safety import GIB
 
 class HostGuardTests(unittest.TestCase):
     def test_actual_memory_only(self):
-        available=[100*GIB]
+        available=[100*GIB];used=[110*GIB];swap=['0']
         def read(path,*args,**kwargs):
             if str(path)=='/proc/meminfo':return f'MemAvailable: {available[0]//1024} kB'
             if path.name=='active.json':return json.dumps({'container_id':'a'*64,'job_id':'test','cgroup':'/sys/fs/cgroup/test','started_at':time.monotonic()})
             if path.name=='runner-heartbeat.json':return json.dumps({'at':time.monotonic()})
-            if path.name=='memory.current':return str(20*GIB)
+            if path.name=='memory.swap.max':return swap[0]
+            if path.name=='memory.current':return str(used[0])
             raise FileNotFoundError()
         with patch.object(Path,'read_text',autospec=True,side_effect=read),patch.object(Path,'exists',return_value=True),patch('time.monotonic',return_value=100.0):
             for value in (100*GIB,68*GIB,30*GIB,24*GIB):
@@ -21,6 +22,8 @@ class HostGuardTests(unittest.TestCase):
                 self.assertIsNone(sample_guard(Path('/virtual'))[0]['reason'])
             available[0]=24*GIB-1024
             self.assertEqual(sample_guard(Path('/virtual'))[0]['reason'],'HOST_MEMORY_GUARD')
+            available[0]=100*GIB;swap[0]='max'
+            self.assertEqual(sample_guard(Path('/virtual'))[0]['reason'],'SWAP_POLICY_LOST')
     def test_exited_worker_is_not_telemetry_failure(self):
         def read(path,*args,**kwargs):
             if str(path)=='/proc/meminfo':return 'MemAvailable: 100000000 kB'
@@ -37,6 +40,7 @@ class HostGuardTests(unittest.TestCase):
             if str(path)=='/proc/meminfo':return 'MemAvailable: 100000000 kB'
             if path.name=='active.json':return json.dumps({'container_id':'a'*64,'job_id':'test','cgroup':'/sys/fs/cgroup/test','started_at':20000-age[0]})
             if path.name=='runner-heartbeat.json':return json.dumps({'at':20000})
+            if path.name=='memory.swap.max':return '0'
             if path.name=='memory.current':return str(20*GIB)
             raise FileNotFoundError()
         with patch.object(Path,'read_text',autospec=True,side_effect=read),patch.object(Path,'exists',return_value=True),patch('time.monotonic',return_value=20000):

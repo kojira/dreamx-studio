@@ -5,8 +5,8 @@ import argparse,hashlib,json,os,shutil,subprocess,threading,time
 from pathlib import Path
 from dreamx.jobs import Jobs
 from dreamx.host_guard import atomic_json,load
-from dreamx.docker_control import execute,inspect_job,kill_job,verify_limits
-from dreamx.safety import GIB,Sample,admission,memory_available
+from dreamx.docker_control import execute,inspect_job,kill_job,verify_limits,configure_no_swap
+from dreamx.safety import GIB,WORKER_LIMIT,Sample,admission,memory_available
 from dreamx.paths import id_path
 
 
@@ -15,7 +15,7 @@ def main():
     if a.attention_patch:
         a.attention_patch=a.attention_patch.resolve()
         assert hashlib.sha256(a.attention_patch.read_bytes()).hexdigest()=='9104decd2574690d397438e59eaf87e54e1bd6c2c695adfc0c45c01b06a14ab7','Unexpected attention patch'
-    trial='v1.1-sdpa' if a.attention_patch else 'v1'
+    trial='v1.9-sdpa' if a.attention_patch else 'v1.9'
     root=a.root.resolve();os.umask(0o077);jobs=Jobs(root/'app/jobs.sqlite')
     source_job=jobs.get(a.source_job);assert source_job['state']=='succeeded'
     source=id_path(root/'app/jobs',a.source_job)/'output.mp4'
@@ -44,7 +44,7 @@ def main():
         if a.attention_patch:
             mounts.append(('bind',str(a.attention_patch),'/opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py',False))
             mounts.append(('bind',str(root/'build/check_refiner_attention.py'),'/opt/check_refiner_attention.py',False))
-        args=['create','--name','dreamx-refiner-test-'+jid,'--label','org.dreamx.studio.job='+jid,'--restart','no','--memory','80g','--memory-swap','80g','--cpus','8','--pids-limit','512','--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges','--log-opt','max-size=10m','--log-opt','max-file=3']
+        args=['create','--name','dreamx-refiner-test-'+jid,'--label','org.dreamx.studio.job='+jid,'--restart','no','--memory',str(WORKER_LIMIT),'--memory-swap',str(WORKER_LIMIT),'--cpus','8','--pids-limit','512','--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges','--log-opt','max-size=10m','--log-opt','max-file=3']
         for env in ['USER=dreamx','HOME=/tmp','PYTHONPATH=/deps','TORCHINDUCTOR_CACHE_DIR=/tmp/dreamx-inductor','HF_HUB_OFFLINE=1','TRANSFORMERS_OFFLINE=1']:
             args+=['--env',env]
         if a.attention_patch:args+=['--env','CHECK_REFINER_ATTENTION=1']
@@ -54,9 +54,7 @@ def main():
         jobs.transition(jid,'preparing');cid=execute(args).strip()
         verify_limits(inspect_job(cid,jid),expected_image_id=image,expected_mounts=mounts,expected_user=user)
         execute(['start',cid]);c=inspect_job(cid,jid);assert c['State']['Running'];pid=c['State']['Pid']
-        cg=next(s.split('::',1)[1] for s in Path(f'/proc/{pid}/cgroup').read_text().splitlines() if s.startswith('0::'))
-        cgroup=Path('/sys/fs/cgroup')/cg.lstrip('/')
-        assert int((cgroup/'memory.max').read_text())==80*GIB and int((cgroup/'memory.swap.max').read_text())==0
+        cgroup=configure_no_swap(cid,jid)
         started=time.monotonic();atomic_json(control/'active.json',{'container_id':cid,'job_id':jid,'cgroup':str(cgroup),'started_at':started})
         deadline=started+5
         while True:

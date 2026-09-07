@@ -4,6 +4,7 @@ import math
 import re
 
 GIB = 1024 ** 3
+WORKER_LIMIT = 0  # Docker unlimited; actual host availability is the RAM stop policy.
 
 @dataclass(frozen=True)
 class Sample:
@@ -34,8 +35,6 @@ def emergency(sample: Sample) -> str | None:
         return "HOST_MEMORY_GUARD"
     if sample.worker_memory is None or sample.worker_memory < 0:
         return "WORKER_TELEMETRY_LOST"
-    if sample.worker_memory >= 72 * GIB:
-        return "WORKER_MEMORY_GUARD"
     return None
 
 

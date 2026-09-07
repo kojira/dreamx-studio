@@ -1,4 +1,6 @@
-# v1.8 — align memory policy (proposal, not deployed)
+# v1.8 — align memory policy
+
+User authorized proceeding in response to the concrete proposal (「とまるなよ」「ちゃんとやってよ」). Implementation and verification now underway; do not infer deployment until recorded.
 
 ## Evidence and approval boundary
 User challenged the residual72GiB stop after being told host availability24GiB was the operative reserve. The v1.1 Refiner trial exited137/OOMKilled=false due to WORKER_MEMORY_GUARD while host availability was55.34GiB. This is not evidence of actual host exhaustion. The mmap candidate is paused, not implemented. This amendment changes safety policy, unlike the previously authorized limited library-compatibility fix, and requires explicit user confirmation.

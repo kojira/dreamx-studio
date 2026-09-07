@@ -7,13 +7,13 @@ from dreamx.safety import GIB
 class DockerControlTests(unittest.TestCase):
     def config(self):
         return {'Image':'sha256:expected','Config':{'User':'1001:1001'},'Mounts':[],
-            'HostConfig':{'Memory':80*GIB,'MemorySwap':80*GIB,'Privileged':False,'PidMode':'',
+            'HostConfig':{'Memory':0,'MemorySwap':0,'Privileged':False,'PidMode':'',
             'RestartPolicy':{'Name':'no'},'NetworkMode':'none','CapDrop':['ALL'],'SecurityOpt':['no-new-privileges']}}
 
     def test_limits_fail_closed(self):
         def verify(c): verify_limits(c,expected_image_id='sha256:expected',expected_mounts=[],expected_user='1001:1001')
         verify(self.config())
-        for key,value in [('Memory',0),('MemorySwap',-1),('Privileged',True),('NetworkMode','host'),('RestartPolicy',{'Name':'always'}),('CapDrop',[])]:
+        for key,value in [('Memory',80*GIB),('Memory',112*GIB),('MemorySwap',-1),('Privileged',True),('NetworkMode','host'),('RestartPolicy',{'Name':'always'}),('CapDrop',[])]:
             c=self.config(); c['HostConfig'][key]=value
             with self.subTest(key=key), self.assertRaises(ValueError): verify(c)
 

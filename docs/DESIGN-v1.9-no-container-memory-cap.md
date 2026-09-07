@@ -1,0 +1,9 @@
+# v1.9 — remove the container memory ceiling
+
+User explicitly directed removing Docker's redundant memory limit after v1.8 retained112GiB. Supersedes the112GiB cap, not the24GiB host guard. No arbitrary new threshold or predictive stop.
+
+Docker Memory=0/MemorySwap=0 (no capacity ceiling); actual worker cgroup memory.max must equal max. The host has16GiB swap, so unlimited Docker settings alone do NOT preserve swap prohibition. Before granting model-load go, the trusted host supervisor resolves the exact labeled worker's PID/cgroup, validates the path, and writes ONLY its memory.swap.max=0 using noninteractive sudo tee. Verify memory.max=max, memory.swap.max=0 and unchanged live container PID. If any verification/write fails, stop that exact waiting worker without loading models. No global swapoff, no other container cgroups or host limits changed, no elevated GPU worker privileges.
+
+Host actual MemAvailable<24GiB at100ms remains primary; missing telemetry/guardian/runner heartbeat stops the exact job. Worker swap configuration is also checked by the independent guardian while active. Removing the hard RAM cap removes that last-resort capacity backstop; monitoring latency means24GiB is a threshold, not a guaranteed retained minimum. Admission96GiB/free disk150GiB, single-job exclusion and180minute timeout remain. No mmap patch.
+
+Apply consistently to base runner, test host, Docker validator and shared policy. CPU tests cover no hidden72/80/112 thresholds and swap-config failure. Harmless real container verifies max/zero-swap and guardian/go handshake before another Refiner trial. Deploy only at verified idle; preserve owned stopped runner socket by rename instead of deletion. Resume one new test identity with same video and approved SDPA patch; preserve all prior outputs and evidence.

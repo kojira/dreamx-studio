@@ -9,11 +9,11 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from .docker_control import inspect_job, kill_job, verify_limits, execute
+from .docker_control import inspect_job, kill_job, verify_limits, execute, configure_no_swap
 from .host_guard import atomic_json, load
 from .paths import id_path
 from .jobs import Jobs
-from .safety import GIB, Sample, admission, memory_available
+from .safety import GIB, WORKER_LIMIT, Sample, admission, memory_available
 
 class Supervisor:
     def __init__(self,root):
@@ -74,7 +74,7 @@ class Supervisor:
                     ('bind',str(output),'/job',True),('bind',str(self.control),'/control',False),
                     ('bind',str(self.root/'build/worker.py'),'/opt/worker.py',False)]
             args=['create','--name','dreamx-job-'+job_id,'--label','org.dreamx.studio.job='+job_id,
-                  '--restart','no','--memory','80g','--memory-swap','80g','--cpus','8','--pids-limit','512',
+                  '--restart','no','--memory',str(WORKER_LIMIT),'--memory-swap',str(WORKER_LIMIT),'--cpus','8','--pids-limit','512',
                   '--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges',
                   '--env','USER=dreamx','--env','HOME=/tmp','--env','TORCHINDUCTOR_CACHE_DIR=/tmp/dreamx-inductor',
                   '--env','HF_HUB_OFFLINE=1','--env','TRANSFORMERS_OFFLINE=1',
@@ -86,11 +86,7 @@ class Supervisor:
             c=inspect_job(cid,job_id);verify_limits(c,expected_image_id=image_id,expected_mounts=mounts,expected_user=user)
             execute(['start',cid]);c=inspect_job(cid,job_id);pid=c['State']['Pid']
             if not c['State']['Running'] or pid<=0:raise RuntimeError('Worker failed to start')
-            cgline=Path(f'/proc/{pid}/cgroup').read_text().strip().splitlines()
-            cg=next(x.split('::',1)[1] for x in cgline if x.startswith('0::'))
-            cgroup=Path('/sys/fs/cgroup')/cg.lstrip('/')
-            assert int((cgroup/'memory.max').read_text())==80*GIB
-            assert int((cgroup/'memory.swap.max').read_text())==0
+            cgroup=configure_no_swap(cid,job_id)
             atomic_json(self.control/'active.json',{'container_id':cid,'job_id':job_id,'cgroup':str(cgroup),'started_at':time.monotonic()})
             # Guardian must observe this exact worker before granting model load.
             deadline=time.monotonic()+5
