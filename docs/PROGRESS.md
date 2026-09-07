@@ -7,17 +7,25 @@ Issue #1, approved design v1. Branch feat/dreamx-studio-v1.
 - Pure safety policy: admission thresholds, host/worker emergency thresholds, guardian heartbeat handling, fail-closed telemetry, exact container ID validation.
 - Guard-loop primitive handles job-specific emergency kill, sensor failure, 60-minute timeout and kill failure without reporting false success. Not yet wired to a deployed independent supervisor.
 - SQLite single-active job transaction/index, idempotency, transitions and explicit restart recovery; session/origin/CSRF primitives; exact-job Docker ownership and limits validation.
-- 21 unittest cases pass: `PYTHONPATH=backend python3 -m unittest discover -s backend/tests -v`.
+- 34 unittest cases pass: `PYTHONPATH=backend python3 -m unittest discover -s backend/tests -v`.
 - Dedicated CUDA13 ARM64 Docker runtime built on target; upstream pinned requirements install and pip check pass. Tiny BF16 SDPA on GB10 passes; PyTorch reports capability support range warning (12.1 hardware versus advertised maximum12.0), so full model compatibility is not established.
 - Non-root probe needed USER/HOME/cache environment because host UID is absent from container passwd; no root workaround used. Dockerfile includes correction; currently built image needs rebuild with it (probe supplied equivalent env explicitly).
 - Upstream inference.py --help imports successfully. No weights loaded.
-- Base weights download running in dedicated container, 8GiB RAM/no swap/2CPU, no GPU. 16 files / 43,177,935,990 bytes at HF revision 10fb869a92dd45659f38fdc2bb74c8ef0ba7bf7c. Refiner excluded. Need confirm exit/size verification before using.
+- Base weights download COMPLETE and size verified, exit0. 16 files / 43,177,935,990 bytes at HF revision 10fb869a92dd45659f38fdc2bb74c8ef0ba7bf7c. Refiner excluded.
+- React trial UI builds; API auth/upload/closed-runner tests pass. Dedicated UI container responds200 and login/status verified on target loopback.
+- Host guardian and Unix socket runner implemented; actual harmless-container kill and heartbeat-loss tests pass. Resource amendments v1.1 and v1.2 approved by user, current caps80GiB and cgroup threshold72GiB; host reserve48GiB/predictive100ms monitoring retained.
+- Two failed smoke trials: safety stop during initial56GiB gate; then cuBLAS failure from mixed library versions. Matching packaged cuBLAS and cuBLASLt fixed the tiny GEMM reproduction without changing dependencies/driver. See HARDWARE-NOTES.md.
+- Matched-library smoke SUCCEEDED:0.875s352x640 H264/AAC, total125.6s, sampled minimum host availability68.72GiB, max cgroup31.69GiB.
+- Normal trial through actual HTTP API SUCCEEDED:69 frames/2.875s,50 steps; total358.3s, denoising235.75s; sampled minimum host availability68.78GiB/max cgroup31.53GiB. Actual output copied to operator's private artifacts, not this public repo.
+- Actual API cancellation test returned cancelled and resource slot ready again. A subsequent user-submitted generation also succeeded; private input/output details not published.
+- Keyless UI requested and approved; fresh-browser test passes, no password input. Current UI/API image dreamx-studio-ui:v1-progress. History selection fixed to avoid replacing selected completed job with active job during polling. Metadata duration2.875s/readyState4/no video error and Range206/1024byte response verified in browser.
+- Actual-step progress display and elapsed time added, collector runs independently and only reads Docker logs; no fabricated percentage before sampling. Active user inference was not restarted during UI replacement.
+- Target runtime image dreamx-studio-runtime:v1-matched-libs digest09392e867213d7fe759acbe98a0066be1ef2ea978fcb29ab52098691f6e7f03b. Always inspect live state before operational changes; user is actively testing.
 
 ## Not yet done / safe next actions
-1. Implement independent host guardian and job-scoped lifecycle controller, exercise kill and stale heartbeat on harmless bounded workers.
-2. API/auth/upload validation/SQLite lifecycle and tests.
-3. React frontend, frontend tests/build.
-4. Dedicated runtime compatibility probe on approved target; no inference until safety evidence exists.
-5. Model file size preflight/download and staged measured smoke/usable generation, then user verification.
+1. User verification in progress; no PR/merge approval yet. Avoid duplicate test jobs while user is using the UI.
+2. Local improvement avoids falsely classifying natural worker cgroup disappearance as telemetry failure; tests pass. This guardian-only change is not yet deployed to running guardian. Deploy only during verified idle window; never restart host runner/guardian during a user job.
+3. Commit/push safe sources and sanitized evidence; do not create PR without user approval.
+4. Runtime is manually started, not an installed boot service. Preserve stopped test/UI containers; no cleanup was authorized.
 
-No model inference executed. Runtime/weights progress above. Pure policy tests are NOT proof that host SSH is protected under GPU load. Two earlier delegated sessions stopped due to extension session replacement before implementation; parent is now implementing directly. User requested a minimal trial UI rather than production polish; retain safety gates and containerization, prioritize usable generation. Keep checkpoint current across heartbeat recovery. Do not create PR before explicit user test approval.
+Model inference and end-to-end trial generation have succeeded as recorded above. Runtime/weights progress above. Pure policy tests are NOT proof that host SSH is protected under GPU load. Two earlier delegated sessions stopped due to extension session replacement before implementation; parent is now implementing directly. User requested a minimal trial UI rather than production polish; retain safety gates and containerization, prioritize usable generation. Keep checkpoint current across heartbeat recovery. Do not create PR before explicit user test approval.

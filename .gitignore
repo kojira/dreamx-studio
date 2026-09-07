@@ -6,7 +6,7 @@ dist/
 .env
 .env.*
 !.env.example
-runtime/
+runtime-data/
 weights/
 inputs/
 outputs/

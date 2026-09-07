@@ -119,7 +119,7 @@ class Supervisor:
                 failure='INFERENCE_FAILED'
                 try:
                     aborted=load(self.control/'last-abort.json')
-                    if aborted.get('container_id')==cid:failure=aborted['reason']
+                    if aborted.get('container_id')==cid and c['State']['ExitCode'] in (137,143):failure=aborted['reason']
                 except (OSError,ValueError):pass
                 raise RuntimeError(failure)
             self.jobs.transition(job_id,'muxing')

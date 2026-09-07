@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from collections import deque
 from .safety import GIB, memory_available, exact_container_id
-from .docker_control import kill_job
+from .docker_control import kill_job, inspect_job
 
 
 def atomic_json(path:Path,data:dict):
@@ -47,6 +47,13 @@ def sample_guard(root:Path):
         if used>=72*GIB: result['reason']='WORKER_MEMORY_GUARD'
         if now-float(active['started_at'])>=3600: result['reason']='TIME_LIMIT'
     except Exception:
+        # A naturally exited worker loses its cgroup; that is not a memory abort.
+        try:
+            if not inspect_job(target,active['job_id'])['State']['Running']:
+                result['reason']=None
+                result['worker_exited']=True
+                return result,None
+        except Exception:pass
         result['reason']='TELEMETRY_ERROR'
     return result,active
 

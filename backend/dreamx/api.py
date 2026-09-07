@@ -1,6 +1,8 @@
 """Small same-origin trial API. Inference remains closed without a ready runner."""
 import json
 import secrets
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 from fastapi import FastAPI, Request, HTTPException
@@ -28,10 +30,12 @@ class JobRequest(BaseModel):
     preset: str='trial'
 
 
-def create_app(root: Path, secret: str, runner: Runner|None=None):
+def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
     root.mkdir(mode=0o700,parents=True,exist_ok=True)
     inputs=root/'inputs'; inputs.mkdir(mode=0o700,exist_ok=True)
-    jobs=Jobs(root/'jobs.sqlite'); sessions=Sessions(secret); runner=runner or UnavailableRunner()
+    jobs=Jobs(root/'jobs.sqlite'); local_session_secret=secret or secrets.token_urlsafe(32)
+    sessions=Sessions(local_session_secret); runner=runner or UnavailableRunner()
+    # Internal session tokens protect browser requests; no user-supplied access key.
     app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
     app.state.jobs=jobs
 
@@ -63,8 +67,8 @@ def create_app(root: Path, secret: str, runner: Runner|None=None):
     async def login(request:Request):
         try:
             data=json.loads(await bounded_body(request,4096))
-            if not isinstance(data,dict) or not isinstance(data.get('secret'),str): raise ValueError()
-            s=sessions.login(data['secret'])
+            if data!={}: raise ValueError()
+            s=sessions.login(local_session_secret)
         except RateLimited: raise HTTPException(429,'RATE_LIMITED')
         except Unauthorized: raise HTTPException(401,'UNAUTHORIZED')
         except (ValueError,TypeError): raise HTTPException(422,'INVALID_REQUEST')
@@ -109,9 +113,16 @@ def create_app(root: Path, secret: str, runner: Runner|None=None):
         except ValueError: raise HTTPException(422,'INVALID_REQUEST')
         request_id=request.headers.get('idempotency-key','')
         if not 1<=len(request_id)<=128: raise HTTPException(422,'IDEMPOTENCY_KEY_REQUIRED')
-        availability=runner.status()
-        if not availability.get('runtime_ready'): raise HTTPException(503,availability.get('reason','RUNNER_NOT_READY'))
         payload=body.model_dump()
+        # A retried admitted request must return its existing job even while busy.
+        with jobs.connect() as db:
+            prior=db.execute('SELECT * FROM jobs WHERE request_id=?',(request_id,)).fetchone()
+        if prior:
+            if json.loads(prior['payload'])!=payload:raise HTTPException(409,'IDEMPOTENCY_CONFLICT')
+            return {'job_id':prior['id'],'state':prior['state']}
+        availability=runner.status()
+        if availability.get('reason')=='BUSY':raise HTTPException(409,'BUSY')
+        if not availability.get('runtime_ready'): raise HTTPException(503,availability.get('reason','RUNNER_NOT_READY'))
         # Store nullable seed for idempotency; runner resolves it once and persists evidence.
         try: job,created=jobs.create(request_id,payload)
         except Busy: raise HTTPException(409,'BUSY')
@@ -131,8 +142,21 @@ def create_app(root: Path, secret: str, runner: Runner|None=None):
 
     @app.get('/api/jobs/{job_id}')
     def detail(job_id:str):
-        try: return jobs.get(job_id)
+        try: job=jobs.get(job_id)
         except KeyError: raise HTTPException(404,'NOT_FOUND')
+        terminal=job['state'] in ('succeeded','failed','cancelled','interrupted')
+        end=datetime.fromisoformat(job['updated_at']) if terminal else datetime.now(timezone.utc)
+        job['elapsed_seconds']=max(0,int((end-datetime.fromisoformat(job['created_at'])).total_seconds()))
+        job['progress']={'phase':job['state'] if terminal else 'preparing'}
+        if not terminal:
+            try:
+                path=id_path(root/'jobs',job_id)/'progress.json'
+                if not path.is_symlink() and path.stat().st_size<8192:
+                    progress=json.loads(path.read_text())
+                    if 0<=time.time()-progress['at']<10:job['progress']=progress
+                    else:job['progress']={'phase':'update_pending'}
+            except (OSError,ValueError,KeyError):pass
+        return job
 
     @app.post('/api/jobs/{job_id}/cancel',status_code=202)
     def cancel(job_id:str):
