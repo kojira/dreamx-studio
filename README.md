@@ -3,7 +3,7 @@
 Minimal browser trial UI for [DreamX-Creator](https://github.com/AMAP-ML/DreamX-Creator) on NVIDIA GB10 / ARM64. First-frame image + prompt → video with audio. Research prototype, not a production service.
 
 ## Safety first
-GPU and CPU share RAM on GB10. Docker limits alone are **not** a proven GPU-memory ceiling. A separate host guardian checks available memory every100ms, stops the exact job below48GiB or a projected breach, and detects lost runner heartbeats. The runner and worker also check guardian liveness. One job at a time, no automatic retries, no automatic data deletion. Worker cap80GiB/no swap and cgroup stop72GiB are secondary limits. See approved amendments in `docs/` and measured limitations in `docs/HARDWARE-NOTES.md`. SSH survival cannot be guaranteed against rapid unaccounted allocations.
+GPU and CPU share RAM on GB10. Docker limits alone are **not** a proven GPU-memory ceiling. A separate host guardian checks available memory every100ms, stops the exact job when actual host availability falls below24GiB (predictive stopping is disabled), and detects lost runner heartbeats. The runner and worker also check guardian liveness. One job at a time, no automatic retries, no automatic data deletion. Worker cap80GiB/no swap and cgroup stop72GiB are secondary limits. See approved amendments in `docs/` and measured limitations in `docs/HARDWARE-NOTES.md`. SSH survival cannot be guaranteed against rapid unaccounted allocations.
 
 Existing host drivers/containers are never replaced by this application. 2K refinement is not enabled.
 

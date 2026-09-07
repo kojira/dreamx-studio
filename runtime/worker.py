@@ -10,9 +10,9 @@ control=Path('/control')
 child=None
 
 def heartbeat_ok():
-    now=time.monotonic()
     guard=json.loads((control/'guard-status.json').read_text())
     runner=json.loads((control/'runner-heartbeat.json').read_text())
+    now=time.monotonic()
     return (0<=now-guard['at']<=2 and 0<=now-runner['at']<=2 and not guard.get('reason'))
 
 def terminate(signum=None,frame=None):

@@ -6,7 +6,7 @@ from dreamx.safety import GIB, Sample
 class GuardianTests(unittest.TestCase):
     def test_low_memory_kills_only_admitted_id(self):
         kill = Mock(); event = Mock()
-        reason = guard_job('b'*64, lambda: Sample(31*GIB, 200*GIB, 1, 0), lambda: True, kill, event)
+        reason = guard_job('b'*64, lambda: Sample(23*GIB, 200*GIB, 1, 0), lambda: True, kill, event)
         self.assertEqual(reason, 'HOST_MEMORY_GUARD')
         kill.assert_called_once_with('b'*64)
         event.assert_called_once_with(reason)

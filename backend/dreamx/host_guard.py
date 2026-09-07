@@ -4,7 +4,6 @@ import json
 import os
 import time
 from pathlib import Path
-from collections import deque
 from .safety import GIB, memory_available, exact_container_id
 from .docker_control import kill_job, inspect_job
 
@@ -38,12 +37,12 @@ def sample_guard(root:Path):
     target=exact_container_id(active['container_id']); result['container_id']=target
     try:
         runner=load(root/'runner-heartbeat.json')
-        age=now-float(runner['at'])
+        age=time.monotonic()-float(runner['at'])
         if not 0<=age<=2: result['reason']='RUNNER_HEARTBEAT_LOST'
         cgroup=guarded_path(active['cgroup'])
         used=int((cgroup/'memory.current').read_text())
         result['worker_memory']=used
-        if available<48*GIB: result['reason']='HOST_MEMORY_GUARD'
+        if available<24*GIB: result['reason']='HOST_MEMORY_GUARD'
         if used>=72*GIB: result['reason']='WORKER_MEMORY_GUARD'
         if now-float(active['started_at'])>=3600: result['reason']='TIME_LIMIT'
     except Exception:
@@ -58,27 +57,13 @@ def sample_guard(root:Path):
     return result,active
 
 
-def projected_low(history, now, available):
-    if not history:return False
-    elapsed=now-history[0][0]
-    rate=max(0,(history[0][1]-available)/elapsed) if elapsed>0 else 0
-    return available-2*rate<48*GIB
-
-
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--root',type=Path,required=True); args=parser.parse_args()
     root=args.root.resolve(); os.umask(0o077)
-    history=deque()
     while True:
         try:
             result,active=sample_guard(root)
             atomic_json(root/f'guardian-health-{os.getpid()}.json',{'at':result['at'],'pid':os.getpid()})
-            if active:
-                history.append((result['at'],result['available']))
-                while len(history)>1 and result['at']-history[0][0]>1: history.popleft()
-                if len(history)>1:
-                    if projected_low(history,result['at'],result['available']): result['reason']='PROJECTED_MEMORY_GUARD'
-            else: history.clear()
             if result['reason'] and active:
                 # Publish the reason before potentially blocking on the Docker API.
                 atomic_json(root/'guard-status.json',result)
