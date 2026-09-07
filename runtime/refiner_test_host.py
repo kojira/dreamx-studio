@@ -11,7 +11,11 @@ from dreamx.paths import id_path
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);p.add_argument('--attention-patch',type=Path);a=p.parse_args()
+    if a.attention_patch:
+        a.attention_patch=a.attention_patch.resolve()
+        assert hashlib.sha256(a.attention_patch.read_bytes()).hexdigest()=='9104decd2574690d397438e59eaf87e54e1bd6c2c695adfc0c45c01b06a14ab7','Unexpected attention patch'
+    trial='v1.1-sdpa' if a.attention_patch else 'v1'
     root=a.root.resolve();os.umask(0o077);jobs=Jobs(root/'app/jobs.sqlite')
     source_job=jobs.get(a.source_job);assert source_job['state']=='succeeded'
     source=id_path(root/'app/jobs',a.source_job)/'output.mp4'
@@ -20,8 +24,8 @@ def main():
     guard=load(root/'control/guard-status.json')
     reason=admission(Sample(memory_available(Path('/proc/meminfo').read_text()),shutil.disk_usage(root).free,0,time.monotonic()-guard['at']),runtime_ready=not guard.get('reason'),active=False)
     assert reason is None,reason
-    payload=json.loads(source_job['payload']);payload['operator_test']='refiner2x-v1'
-    job,created=jobs.create('operator-refiner2x-v1-'+a.source_job,payload)
+    payload=json.loads(source_job['payload']);payload['operator_test']='refiner2x-'+trial
+    job,created=jobs.create('operator-refiner2x-'+trial+'-'+a.source_job,payload)
     assert created,'Test already reserved or completed; do not duplicate'
     jid=job['id'];cid=None;guardian=None;heartbeat_stop=threading.Event();control=None;failure=None
     output=id_path(root/'app/jobs',jid)
@@ -37,9 +41,13 @@ def main():
         guardian=subprocess.Popen(['python3','-m','dreamx.host_guard','--root',str(control)],env={**os.environ,'PYTHONPATH':str(root/'build')},stdin=subprocess.DEVNULL,stdout=glog,stderr=glog,start_new_session=True)
         image=load(root/'config.json')['image_id'];user=f'{os.getuid()}:{os.getgid()}'
         mounts=[('bind',str(root/'weights'),'/opt/dreamx/checkpoints',False),('bind',str(source),'/input.mp4',False),('bind',str(output),'/job',True),('bind',str(control),'/control',False),('bind',str(root/'build/refiner-site-v1'),'/deps',False),('bind',str(root/'build/refiner_test_worker.py'),'/opt/refiner_test_worker.py',False)]
+        if a.attention_patch:
+            mounts.append(('bind',str(a.attention_patch),'/opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py',False))
+            mounts.append(('bind',str(root/'build/check_refiner_attention.py'),'/opt/check_refiner_attention.py',False))
         args=['create','--name','dreamx-refiner-test-'+jid,'--label','org.dreamx.studio.job='+jid,'--restart','no','--memory','80g','--memory-swap','80g','--cpus','8','--pids-limit','512','--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges','--log-opt','max-size=10m','--log-opt','max-file=3']
         for env in ['USER=dreamx','HOME=/tmp','PYTHONPATH=/deps','TORCHINDUCTOR_CACHE_DIR=/tmp/dreamx-inductor','HF_HUB_OFFLINE=1','TRANSFORMERS_OFFLINE=1']:
             args+=['--env',env]
+        if a.attention_patch:args+=['--env','CHECK_REFINER_ATTENTION=1']
         for typ,src,dst,rw in mounts:args+=['--mount',f'type={typ},src={src},dst={dst}'+('' if rw else ',readonly')]
         args+=[image,'python','/opt/refiner_test_worker.py']
         atomic_json(output/'launch.json',{'image':image,'argv':args})

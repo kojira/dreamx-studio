@@ -1,6 +1,6 @@
 # Refiner test v1.1 — narrow missing-FlashAttention fallback
 
-Status: proposed, awaiting explicit user approval. No patch applied, no retry launched.
+Status: authorized by the user's subsequent instruction not to request confirmation for each bounded compatibility fix needed for this test. Proceed with this exact test-only change and retry; safety limits and production environment remain unchanged.
 
 ## Failure and bounded remedy
 Pinned upstream `video_refiner/wan/modules/sr_dit/attention.py:flash_attention` advertises FA3/FA2/PyTorch SDPA dispatch, but chooses SDPA only on CPU or head dimension>256. CUDA+head128 with no external FlashAttention reaches `assert FLASH_ATTN_2_AVAILABLE`. The observed failure is dense cross-attention, after successful model loading. `models.py` initializes context_lens=None for this path.
