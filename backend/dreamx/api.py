@@ -144,6 +144,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
         jobs.reserve_upload(identity)
         started = False
         succeeded = False
+        cancel_notified = False
         validation = None
         watcher = None
         try:
@@ -162,13 +163,19 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
             # Observe errors even when the browser/server cancels this request.
             validation.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
             async def disconnected():
-                while not await request.is_disconnected():
-                    await asyncio.sleep(.1)
+                # Body is fully consumed: dedicate this receiver to disconnects.
+                # is_disconnected() cancels its receive immediately and can miss
+                # events through BaseHTTPMiddleware's checkpointing wrapper.
+                while True:
+                    message = await request.receive()
+                    if message['type'] == 'http.disconnect':
+                        return
             watcher = asyncio.create_task(disconnected())
             done, _ = await asyncio.wait((validation, watcher), return_when=asyncio.FIRST_COMPLETED)
             if validation not in done:
                 with contextlib.suppress(Exception):
                     await asyncio.to_thread(runner.cancel_validation, identity)
+                    cancel_notified = True
                 with contextlib.suppress(Exception):
                     await asyncio.shield(validation)
                 raise HTTPException(400, 'UPLOAD_CANCELLED')
@@ -192,8 +199,9 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
             if watcher is not None:
                 watcher.cancel()
             if started and not succeeded:
-                with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(asyncio.to_thread(runner.cancel_validation, identity))
+                if not cancel_notified:
+                    with contextlib.suppress(Exception, asyncio.CancelledError):
+                        await asyncio.shield(asyncio.to_thread(runner.cancel_validation, identity))
                 jobs.fail_video(identity)
             # Never delete files after handing them to a host-owned container.
             # Its lease survives this request until exact stop is confirmed.

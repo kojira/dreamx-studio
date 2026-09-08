@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -113,6 +115,46 @@ class VideoApiTests(unittest.TestCase):
         self.assertEqual(self.app.state.jobs.video(identity)['state'], 'failed')
         self.assertEqual(self.runner.cancelled, [identity])
         self.assertEqual(self.client.get('/api/video-inputs/' + identity + '/preview').status_code, 409)
+
+    def test_disconnect_after_body_notifies_host_before_validation_finishes(self):
+        started, cancelled = threading.Event(), threading.Event()
+        def validate(identity):
+            self.runner.calls.append(identity)
+            started.set()
+            cancelled.wait(5)
+            raise RuntimeError('VALIDATION_CANCELLED')
+        def cancel(identity):
+            self.runner.cancelled.append(identity)
+            cancelled.set()
+            return {'state': 'failed'}
+        self.runner.validate_video = validate
+        self.runner.cancel_validation = cancel
+        headers = {**self.headers, 'host': '127.0.0.1:8780',
+                   'cookie': 'dreamx_session=' + self.client.cookies.get('dreamx_session')}
+        scope = {'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1',
+                 'method': 'POST', 'scheme': 'http', 'path': '/api/video-inputs',
+                 'raw_path': b'/api/video-inputs', 'query_string': b'',
+                 'headers': [(k.encode(), v.encode()) for k, v in headers.items()],
+                 'client': ('127.0.0.1', 10000), 'server': ('127.0.0.1', 8780)}
+        async def exercise():
+            sent = False
+            async def receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {'type': 'http.request', 'body': b'synthetic', 'more_body': False}
+                await asyncio.to_thread(started.wait, 4)
+                return {'type': 'http.disconnect'}
+            async def send(message):
+                pass
+            await asyncio.wait_for(self.app(scope, receive, send), timeout=4)
+        try:
+            asyncio.run(exercise())
+            self.assertTrue(cancelled.is_set())
+            self.assertEqual(self.runner.cancelled, self.runner.calls)
+            self.assertEqual(self.app.state.jobs.video(self.runner.calls[0])['state'], 'failed')
+        finally:
+            cancelled.set()
 
     def test_refiner_admission_idempotency_and_kind(self):
         self.runner.refiner = True
