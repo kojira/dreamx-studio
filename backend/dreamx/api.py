@@ -13,8 +13,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
 from .auth import Sessions, Unauthorized, RateLimited, check_origin
 from .inputs import ingest_image, id_path, InvalidImage, MAX_BYTES
-from .jobs import Jobs, Busy, Conflict
-from .video_contract import MAX_UPLOAD_BYTES
+from .jobs import Jobs, Busy, Conflict, job_kind
+from .video_contract import MAX_UPLOAD_BYTES, RECIPE
 from .video_container import video_paths
 
 class Runner(Protocol):
@@ -38,6 +38,11 @@ class JobRequest(BaseModel):
     seed: int|None=Field(default=None,ge=0,le=2147483647,strict=True)
     preset: str='trial'
     spatial_tokens: int=Field(default=220,strict=True)
+
+
+class RefinerRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    input_id: str
 
 
 def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
@@ -242,17 +247,81 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
                 raise HTTPException(503,'RUNNER_SUBMISSION_FAILED')
         return {'job_id':job['id'],'state':jobs.get(job['id'])['state']}
 
+    @app.post('/api/refiner-jobs', status_code=202)
+    async def create_refiner(request: Request):
+        try:
+            body = RefinerRequest.model_validate_json(await bounded_body(request, 4096))
+            metadata = jobs.video(body.input_id)
+            _, work = video_paths(root, body.input_id)
+            normalized = work / 'normalized.mp4'
+            if metadata['state'] != 'validated' or normalized.is_symlink() or not normalized.is_file():
+                raise ValueError()
+        except (ValueError, KeyError):
+            raise HTTPException(422, 'INVALID_VIDEO')
+        request_id = request.headers.get('idempotency-key', '')
+        if not 1 <= len(request_id) <= 128:
+            raise HTTPException(422, 'IDEMPOTENCY_KEY_REQUIRED')
+        payload = {'kind': 'refine', 'input_id': body.input_id, 'recipe': RECIPE,
+                   'seed': 42, 'frames': metadata['normalized_frames'], 'has_audio': bool(metadata['has_audio'])}
+        with jobs.connect() as db:
+            previous = db.execute('SELECT * FROM jobs WHERE request_id=?', (request_id,)).fetchone()
+        if previous:
+            if json.loads(previous['payload']) != payload:
+                raise HTTPException(409, 'IDEMPOTENCY_CONFLICT')
+            return {'job_id': previous['id'], 'state': previous['state']}
+        availability = await asyncio.to_thread(runner.status)
+        if availability.get('reason') == 'BUSY':
+            raise HTTPException(409, 'BUSY')
+        if not availability.get('refiner_ready'):
+            raise HTTPException(503, availability.get('reason') or 'RUNNER_NOT_READY')
+        try:
+            job, created = jobs.create(request_id, payload)
+        except Busy:
+            raise HTTPException(409, 'BUSY')
+        except Conflict:
+            raise HTTPException(409, 'IDEMPOTENCY_CONFLICT')
+        if created:
+            try:
+                await asyncio.to_thread(runner.submit, job)
+            except Exception:
+                # A lost submit reply may conceal a running worker. Only mark
+                # admission failed if the runner has not advanced the state.
+                with jobs.connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    changed = db.execute("UPDATE jobs SET state='failed',error_code='RUNNER_SUBMISSION_FAILED' WHERE id=? AND state='admitted'", (job['id'],)).rowcount
+                    if changed:
+                        db.execute('DELETE FROM operations WHERE owner_id=? AND container_id IS NULL', (job['id'],))
+                raise HTTPException(503, 'RUNNER_SUBMISSION_FAILED')
+        return {'job_id': job['id'], 'state': jobs.get(job['id'])['state']}
+
     @app.get('/api/jobs')
     def history(page:int=1):
         if page<1 or page>100000: raise HTTPException(422,'INVALID_PAGE')
         with jobs.connect() as db:
-            return [dict(r) for r in db.execute('SELECT id,state,created_at,updated_at,error_code FROM jobs ORDER BY created_at DESC LIMIT 20 OFFSET ?',((page-1)*20,))]
+            rows = [dict(r) for r in db.execute('SELECT id,state,created_at,updated_at,error_code,payload FROM jobs ORDER BY created_at DESC LIMIT 20 OFFSET ?',((page-1)*20,))]
+        for row in rows:
+            row['kind'] = job_kind(json.loads(row.pop('payload')))
+            if row['kind'] == 'refine':
+                row['output_size'] = [1920, 1080]
+        return rows
 
     @app.get('/api/jobs/{job_id}')
     def detail(job_id:str):
         try: job=jobs.get(job_id)
         except KeyError: raise HTTPException(404,'NOT_FOUND')
-        job['spatial_tokens']=json.loads(job['payload']).get('spatial_tokens',220)
+        payload = json.loads(job['payload'])
+        job['kind'] = job_kind(payload)
+        job['spatial_tokens']=payload.get('spatial_tokens',220)
+        if job['kind'] == 'refine':
+            job['output_size'] = [1920, 1080]
+            job['input_id'] = payload['input_id']
+        job['artifacts'] = []
+        if job['state'] == 'succeeded':
+            directory = id_path(root / 'jobs', job_id)
+            for kind, filename in (('mp4', 'output.mp4'), ('wav', 'output.wav'), ('first_frame', 'output_first_frame.png')):
+                path = directory / filename
+                if path.is_file() and not path.is_symlink():
+                    job['artifacts'].append(kind)
         terminal=job['state'] in ('succeeded','failed','cancelled','interrupted')
         end=datetime.fromisoformat(job['updated_at']) if terminal else datetime.now(timezone.utc)
         job['elapsed_seconds']=max(0,int((end-datetime.fromisoformat(job['created_at'])).total_seconds()))
@@ -263,7 +332,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
                 if not path.is_symlink() and path.stat().st_size<8192:
                     progress=json.loads(path.read_text())
                     if 0<=time.time()-progress['at']<10:job['progress']=progress
-                    else:job['progress']={'phase':'update_pending'}
+                    else:job['progress']={**progress,'phase':'update_pending'}
             except (OSError,ValueError,KeyError):pass
         return job
 

@@ -16,10 +16,12 @@ class VideoRunner:
         self.error = None
         self.calls = []
         self.cancelled = []
+        self.refiner = False
+        self.submitted = []
 
     def status(self):
         return {'runtime_ready': not self.busy, 'video_validation_ready': not self.busy,
-                'reason': 'BUSY' if self.busy else None}
+                'reason': 'BUSY' if self.busy else None, 'refiner_ready': self.refiner and not self.busy}
 
     def validate_video(self, identity):
         self.calls.append(identity)
@@ -35,6 +37,11 @@ class VideoRunner:
         jobs.finish_video(identity, metadata)
         jobs.release_stopped(identity)
         return {**metadata, 'input_id': identity, 'normalized_fps': 24}
+
+    def submit(self, job):
+        self.submitted.append(job['id'])
+        self.busy = True
+        Jobs(self.root / 'jobs.sqlite').transition(job['id'], 'preparing')
 
     def cancel_validation(self, identity):
         self.cancelled.append(identity)
@@ -106,6 +113,32 @@ class VideoApiTests(unittest.TestCase):
         self.assertEqual(self.app.state.jobs.video(identity)['state'], 'failed')
         self.assertEqual(self.runner.cancelled, [identity])
         self.assertEqual(self.client.get('/api/video-inputs/' + identity + '/preview').status_code, 409)
+
+    def test_refiner_admission_idempotency_and_kind(self):
+        self.runner.refiner = True
+        identity = self.client.post('/api/video-inputs', content=b'x', headers=self.headers).json()['input_id']
+        headers = {**self.headers, 'content-type': 'application/json', 'idempotency-key': 'refine-once'}
+        first = self.client.post('/api/refiner-jobs', json={'input_id': identity}, headers=headers)
+        second = self.client.post('/api/refiner-jobs', json={'input_id': identity}, headers=headers)
+        self.assertEqual(first.status_code, 202, first.text)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(len(self.runner.submitted), 1)
+        detail = self.client.get('/api/jobs/' + first.json()['job_id']).json()
+        self.assertEqual(detail['kind'], 'refine')
+        self.assertEqual(detail['output_size'], [1920, 1080])
+        self.assertEqual(detail['artifacts'], [])
+        self.assertEqual(self.client.get('/api/jobs').json()[0]['kind'], 'refine')
+        other = self.client.post('/api/refiner-jobs', json={'input_id': identity}, headers={**headers, 'idempotency-key': 'other'})
+        self.assertEqual(other.status_code, 409)
+
+    def test_refiner_not_enabled_or_unknown_options_rejected(self):
+        identity = self.client.post('/api/video-inputs', content=b'x', headers=self.headers).json()['input_id']
+        headers = {**self.headers, 'content-type': 'application/json', 'idempotency-key': 'request'}
+        self.assertEqual(self.client.post('/api/refiner-jobs', json={'input_id': identity}, headers=headers).status_code, 503)
+        self.runner.refiner = True
+        response = self.client.post('/api/refiner-jobs', json={'input_id': identity, 'seed': 99}, headers=headers)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.runner.submitted, [])
 
     def test_preview_symlink_rejected(self):
         result = self.client.post('/api/video-inputs', content=b'x', headers=self.headers).json()

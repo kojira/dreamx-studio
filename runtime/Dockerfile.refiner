@@ -1,0 +1,18 @@
+# Build only after verifying this local base tag resolves to
+# sha256:09392e867213d7fe759acbe98a0066be1ef2ea978fcb29ab52098691f6e7f03b.
+# Dedicated image layers: generator image/environment remain unchanged.
+FROM dreamx-studio-runtime:v1-matched-libs
+RUN test "$(git -C /opt/dreamx rev-parse HEAD)" = 215d4cd7fbed7e161ab508ae1f85a8fee0536f62 \
+    && pip install --no-deps --target /opt/refiner-deps peft==0.17.1 ftfy==6.3.1 wcwidth==0.2.13
+COPY runtime/patch_refiner_attention.py runtime/patch_refiner_audio.py /opt/studio/
+RUN python /opt/studio/patch_refiner_attention.py \
+      /opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py /opt/studio/attention.patched.py \
+    && python /opt/studio/patch_refiner_audio.py \
+      /opt/dreamx/video_refiner/inference_sr.py /opt/studio/inference_sr.patched.py \
+    && cp /opt/studio/attention.patched.py /opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py \
+    && cp /opt/studio/inference_sr.patched.py /opt/dreamx/video_refiner/inference_sr.py
+COPY backend/dreamx/video_contract.py backend/dreamx/refiner_recipe.py /opt/studio/dreamx/
+COPY runtime/refiner_worker.py /opt/studio/refiner_worker.py
+ENV PYTHONPATH=/opt/refiner-deps USER=dreamx HOME=/tmp
+WORKDIR /opt/dreamx/video_refiner
+CMD ["python", "/opt/studio/refiner_worker.py"]
