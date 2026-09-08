@@ -87,7 +87,7 @@ def self_contained_mp4(path):
                         entry_size, entry_type, flags = struct.unpack('>I4sI', source.read(12))
                         if entry_size < 12 or offset + entry_size > limit:
                             raise InvalidVideo()
-                        if entry_type not in (b'url ', b'urn ') or flags != 1:
+                        if entry_type not in (b'url ', b'urn ', b'alis') or flags != 1 or (entry_type == b'alis' and entry_size != 12):
                             raise InvalidVideo('UNSUPPORTED_VIDEO')
                         references += 1
                         offset += entry_size

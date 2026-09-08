@@ -38,6 +38,13 @@ class VideoValidatorTests(unittest.TestCase):
         self.source.write_bytes(movie())
         validator.self_contained_mp4(self.source)
 
+    def test_self_contained_quicktime_alias(self):
+        self.source.write_bytes(movie(brand=b'qt  ').replace(b'url ', b'alis'))
+        validator.self_contained_mp4(self.source)
+        self.source.write_bytes(movie(flags=0, brand=b'qt  ').replace(b'url ', b'alis'))
+        with self.assertRaises(InvalidVideo):
+            validator.self_contained_mp4(self.source)
+
     def test_external_reference_rejected(self):
         self.source.write_bytes(movie(flags=0))
         with self.assertRaisesRegex(InvalidVideo, 'UNSUPPORTED_VIDEO'):
