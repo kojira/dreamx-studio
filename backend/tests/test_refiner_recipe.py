@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -67,6 +68,25 @@ class RefinerRecipeTests(unittest.TestCase):
                          patch.object(module, 'digest', return_value='hash'):
                         with self.assertRaisesRegex(ValueError, 'processing frame/size mismatch'):
                             worker.main()
+
+    def test_heartbeat_loss_stops_real_child_process(self):
+        location = Path(__file__).resolve().parents[2] / 'runtime' / 'refiner_worker.py'
+        spec = importlib.util.spec_from_file_location('refiner_stop_test', location)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            worker = module.Worker({'job_id':'job'}, control=root, job=root)
+            try:
+                with patch.object(worker, 'healthy', side_effect=[True, False]):
+                    with self.assertRaises(SystemExit) as stopped:
+                        worker.run([sys.executable, '-c', 'import time; time.sleep(30)'])
+                self.assertEqual(stopped.exception.code, 143)
+                self.assertIsNotNone(worker.child.poll())
+            finally:
+                if worker.child is not None and worker.child.poll() is None:
+                    worker.child.kill()
+                    worker.child.wait(timeout=5)
 
     def test_worker_health_is_bound_to_exact_active_job_and_container(self):
         location = Path(__file__).resolve().parents[2] / 'runtime' / 'refiner_worker.py'
