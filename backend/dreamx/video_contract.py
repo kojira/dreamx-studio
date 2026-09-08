@@ -72,8 +72,6 @@ def probe_contract(probe, output_fps=OUTPUT_FPS, normalized=False):
         w, h = video['width'], video['height']
         if type(w) is not int or type(h) is not int or not (256 <= w <= 1280 and 144 <= h <= 720):
             raise InvalidVideo('UNSUPPORTED_VIDEO')
-        if abs(Fraction(w, h) / Fraction(16, 9) - 1) > Fraction(1, 100):
-            raise InvalidVideo('UNSUPPORTED_VIDEO')
         # Unspecified SAR in MP4 denotes square pixels; an explicit non-unit SAR
         # must not be silently repaired. Frame validation checks display matrices.
         sar = video.get('sample_aspect_ratio', '1:1')
@@ -85,7 +83,7 @@ def probe_contract(probe, output_fps=OUTPUT_FPS, normalized=False):
             if number(side.get('rotation', 0)) != 0:
                 raise InvalidVideo('UNSUPPORTED_VIDEO')
         fps = rate(video['avg_frame_rate'])
-        if (not normalized and not 1 <= fps <= 60) or rate(video['r_frame_rate']) != fps:
+        if (not normalized and not 1 <= fps <= 60) or (normalized and rate(video['r_frame_rate']) != fps):
             raise InvalidVideo('UNSUPPORTED_VIDEO')
         duration = number(video['duration'])
         if duration <= 0:

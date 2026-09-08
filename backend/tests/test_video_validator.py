@@ -78,15 +78,14 @@ class VideoValidatorTests(unittest.TestCase):
         self.source.write_bytes(movie() + atom(b'mdat', b'url \x00external payload'))
         validator.self_contained_mp4(self.source)
 
-    def test_frame_timestamp_gap_rejected_even_when_average_fps_matches(self):
+    def test_variable_frame_timing_is_normalized_not_rejected(self):
         stream = {'avg_frame_rate': '24/1', 'time_base': '1/12288',
                   'duration': '0.25', 'width': 1280, 'height': 720}
         frames = [{'best_effort_timestamp_time': str(i / 24), 'width': 1280,
                    'height': 720, 'pix_fmt': 'yuv420p'} for i in range(6)]
         frames[3]['best_effort_timestamp_time'] = str(3.5 / 24)
-        with patch.object(validator, 'run', return_value=json.dumps({'frames': frames}).encode()):
-            with self.assertRaisesRegex(InvalidVideo, 'UNSUPPORTED_VIDEO'):
-                validator.decoded_frames(self.source, stream)
+        with patch.object(validator, 'run', side_effect=[json.dumps({'frames': frames}).encode(), b'']):
+            self.assertEqual(validator.decoded_frames(self.source, stream), 6)
 
     def test_cfr_decode_also_requires_strict_ffmpeg_decode(self):
         stream = {'avg_frame_rate': '24/1', 'time_base': '1/12288',

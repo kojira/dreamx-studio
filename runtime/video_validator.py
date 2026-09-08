@@ -127,23 +127,25 @@ def decoded_frames(path, stream):
         '-of', 'json', str(path),
     ]))
     frames = data.get('frames', [])
-    fps = rate(stream['avg_frame_rate'])
     if not frames:
         raise InvalidVideo('INVALID_DURATION')
     start = number(frames[0]['best_effort_timestamp_time'])
     tick = float(rate(stream['time_base']))
-    # Demuxer timebase quantization, not a frame-sized tolerance that hides VFR.
+    # Input timing can be variable; the fps filter performs CFR normalization.
     tolerance = max(tick, 0.000002)
     if abs(start - number(stream.get('start_time', 0))) > tolerance:
         raise InvalidVideo('INVALID_VIDEO')
-    for index, frame in enumerate(frames):
+    previous = start
+    for frame in frames:
         if (frame.get('width'), frame.get('height'), frame.get('pix_fmt')) != (stream['width'], stream['height'], 'yuv420p'):
             raise InvalidVideo('UNSUPPORTED_VIDEO')
-        if abs(number(frame['best_effort_timestamp_time']) - start - float(index / fps)) > tolerance:
+        timestamp = number(frame['best_effort_timestamp_time'])
+        if timestamp < previous:
             raise InvalidVideo('UNSUPPORTED_VIDEO')
+        previous = timestamp
         if any(number(side.get('rotation', 0)) != 0 for side in frame.get('side_data_list', [])):
             raise InvalidVideo('UNSUPPORTED_VIDEO')
-    if abs(len(frames) / float(fps) - number(stream['duration'])) > tolerance:
+    if previous - start > number(stream['duration']) + tolerance:
         raise InvalidVideo('INVALID_DURATION')
     # Strict full decode promotes corrupt bitstream errors to failure. ffprobe
     # alone can exit zero after a decoder warning and is not sufficient evidence.
@@ -180,8 +182,6 @@ def validate(source, output, output_fps=OUTPUT_FPS):
     run(arguments)
     result_probe = probe(output, count=True)
     count = normalized_contract(result_probe, metadata, output_fps)
-    if rate(video['avg_frame_rate']) == output_fps and count != original_count:
-        raise InvalidVideo('INVALID_DURATION')
     if metadata['has_audio'] and audio_hash(source) != audio_hash(output):
         raise InvalidVideo('UNSUPPORTED_AUDIO_TIMING')
     return {**metadata, 'normalized_frames': count, 'normalized_fps': float(output_fps),

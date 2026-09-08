@@ -55,6 +55,9 @@ class VideoContractTests(unittest.TestCase):
         result = probe_contract(sample())
         self.assertEqual(result['source_fps'], 30)
         self.assertTrue(result['has_audio'])
+        flexible = sample()
+        flexible['streams'][0].update(width=896, height=512, avg_frame_rate='4825600/193113', r_frame_rate='25/1')
+        self.assertEqual(probe_contract(flexible)['width'], 896)
         silent = sample()
         silent['streams'].pop()
         self.assertFalse(probe_contract(silent)['has_audio'])
@@ -73,7 +76,6 @@ class VideoContractTests(unittest.TestCase):
         cases = [{'codec_name': 'hevc'}, {'pix_fmt': 'yuv444p'}, {'width': 1920},
                  {'height': 721}, {'width': 720, 'height': 1280}, {'sample_aspect_ratio': '2:1'},
                  {'tags': {'rotate': '90'}}, {'side_data_list': [{'rotation': 180}]},
-                 {'avg_frame_rate': '30/1', 'r_frame_rate': '60/1'},
                  {'avg_frame_rate': '61/1', 'r_frame_rate': '61/1'},
                  {'duration': '0'}, {'duration': '-1'}, {'duration': 'nan'},
                  {'avg_frame_rate': '0/0'}]

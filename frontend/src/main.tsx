@@ -65,7 +65,7 @@ function App(){
  const running=!!job&&!terminal.has(job.state);
  const kindLabel=(kind?:string)=>kind==='refine'?'1080p高解像度化':kind==='operator_test'?'Refiner試験':'画像から生成';
  return <main><header><h1>DreamX Studio</h1><p>画像から、音のある動画へ。GB10 お試し版</p></header>
- {error&&<p role="alert" className="error">{error}</p>}
+ {mode==='generate'&&error&&<p role="alert" className="error">{error}</p>}
  {!csrf?<section><p>接続中…</p>{!busy&&<button onClick={()=>void connect()}>再接続</button>}</section>:<>
  <nav aria-label="処理種別"><button type="button" aria-pressed={mode==='generate'} disabled={busy||uploading} onClick={()=>setMode('generate')}>画像から生成</button> <button type="button" aria-pressed={mode==='refine'} disabled={busy||uploading} onClick={()=>setMode('refine')}>動画を1080p化</button></nav>
  <aside>{status?.active_kind==='validate_video'?'動画検証中':status?.runtime_ready?'処理受付可能':`準備中・受付停止：${status?.reason||'確認中'}`}{status?.available_gib!==undefined&&` ／ RAM空き ${status.available_gib.toFixed(1)} GiB`}</aside>
@@ -76,10 +76,11 @@ function App(){
  <label>解像度設定<select value={spatialTokens} onChange={e=>setSpatialTokens(Number(e.target.value))}><option value={220}>軽量 — 220トークン</option><option value={440}>中間 — 440トークン</option><option value={880}>公式 — 880トークン</option></select></label>
  <p>69フレーム（約2.88秒）・50ステップ。実際の縦横サイズは画像に合わせます。高解像度ほどRAMと時間を使います。2K化は未対応。</p>
  <button disabled={busy||running||!status?.runtime_ready||!file||!prompt.trim()}>音声付き動画を生成</button></form>:<form onSubmit={refine}>
- <p>動画の長さ制限はありません。横動画・720p以下・100MiB以内のMP4 / MOV（H264/AAC）。出力は1920×1080、fpsは下の数値で指定します。長尺はGPU未検証で、処理時間やメモリ使用量が増える場合があります。</p>
+ <p>動画の長さ制限はありません。720p以下・100MiB以内のMP4 / MOV（H264/AAC）。出力は1920×1080、fpsは下の数値で指定します。長尺はGPU未検証で、処理時間やメモリ使用量が増える場合があります。</p>
  <p>画質や顔の改善は保証しません。口を閉じる、発話を除く、本人性を補正する機能ではありません。</p>
  <label>出力fps<input type="number" step="any" required value={outputFps} disabled={busy||running||uploading} onChange={e=>{setOutputFps(e.target.value);setVideoInput(null);}}/></label>
  {videoFile&&!videoInput&&!uploading&&<button type="button" disabled={busy||running||!status?.video_validation_ready} onClick={()=>void uploadVideo(videoFile)}>このfpsで検証</button>}
+ {error&&<p role="alert" className="error">検証・処理に失敗しました：{error}</p>}
  <label>入力動画<input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={busy||running||uploading||!status?.video_validation_ready} onChange={e=>void uploadVideo(e.target.files?.[0]||null)}/></label>
  {videoInput?<><p>検証済み入力（{videoInput.normalized_fps}fpsのMP4）</p><video controls src={'/api/video-inputs/'+videoInput.input_id+'/preview'} aria-label="入力動画"/></>:videoPreview&&<><p>検証後、MP4形式に正規化した動画をプレビューします。</p>{videoFile?.type!=='video/quicktime'&&!videoFile?.name.toLowerCase().endsWith('.mov')&&<video controls src={videoPreview} aria-label="入力動画"/>}</>}
  {uploading&&<p role="status">アップロード・動画検証中… <button type="button" onClick={()=>uploadAbort.current?.abort()}>アップロード接続を中断</button>（検証開始後は停止確認まで受付を保持します）</p>}
