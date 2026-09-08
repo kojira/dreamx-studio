@@ -1,0 +1,7 @@
+**
+!backend/
+!backend/dreamx/
+!backend/dreamx/video_contract.py
+!runtime/
+!runtime/video_validator.py
+!runtime/Dockerfile.video-validator
