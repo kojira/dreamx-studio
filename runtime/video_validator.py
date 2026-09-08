@@ -25,7 +25,7 @@ def sha256(path):
 
 
 def self_contained_mp4(path):
-    """Reject QuickTime-only files and non-self-contained MP4 data references.
+    """Accept bounded self-contained MP4/MOV, never external data references.
 
     Only structural container atoms are traversed; mdat is skipped with seek.
     This check does not replace the demuxer's disabled external references.
@@ -36,6 +36,7 @@ def self_contained_mp4(path):
     count = 0
     references = 0
     compatible = False
+    seen = set()
     with path.open('rb') as source:
         def atoms(start, end, depth=0):
             nonlocal count, references, compatible
@@ -59,12 +60,14 @@ def self_contained_mp4(path):
                 if length < header or cursor + length > end:
                     raise InvalidVideo()
                 body, limit = cursor + header, cursor + length
+                if depth == 0:
+                    seen.add(kind)
                 if kind == b'ftyp' and depth == 0:
                     if length - header < 8 or length - header > 4096:
                         raise InvalidVideo()
                     data = source.read(length - header)
                     brands = [data[:4]] + [data[i:i + 4] for i in range(8, len(data), 4)]
-                    allowed = {b'isom', b'mp41', b'mp42', b'avc1', b'M4V ', b'M4A '}
+                    allowed = {b'isom', b'mp41', b'mp42', b'avc1', b'M4V ', b'M4A ', b'qt  '}
                     allowed.update(b'iso' + str(i).encode() for i in range(2, 10))
                     compatible = bool(set(brands) & allowed)
                 elif kind in (b'moov', b'trak', b'mdia', b'minf', b'dinf'):
@@ -92,7 +95,8 @@ def self_contained_mp4(path):
                         raise InvalidVideo()
                 cursor = limit
         atoms(0, size)
-    if not compatible or not references:
+    legacy_mov = b'ftyp' not in seen and {b'moov', b'mdat'} <= seen
+    if not (compatible or legacy_mov) or not references:
         raise InvalidVideo('UNSUPPORTED_VIDEO')
 
 

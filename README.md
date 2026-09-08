@@ -1,6 +1,6 @@
 # DreamX Studio
 
-Minimal browser trial UI for [DreamX-Creator](https://github.com/AMAP-ML/DreamX-Creator) on NVIDIA GB10 / ARM64. First-frame image + prompt → video with audio, or short MP4 →1080p with Refiner. Research prototype, not a production service.
+Minimal browser trial UI for [DreamX-Creator](https://github.com/AMAP-ML/DreamX-Creator) on NVIDIA GB10 / ARM64. First-frame image + prompt → video with audio, or short MP4/MOV →1080p with Refiner. Research prototype, not a production service.
 
 ## Safety first
 GPU and CPU share RAM on GB10. Docker limits alone are **not** a proven GPU-memory ceiling. A separate host guardian checks available memory every100ms, stops the exact job when actual host availability falls below8GiB (predictive stopping is disabled), and detects lost runner heartbeats. The runner and worker also check guardian liveness. One job at a time, no automatic retries, no automatic data deletion. GPU workers have no Docker RAM capacity ceiling or cgroup-usage kill threshold. The separate CPU video validator is bounded to2 CPUs,2GiB RAM, no swap allowance,128 PIDs and60 seconds. Before model load the trusted host sets only the exact worker's cgroup memory.swap.max=0 (requires noninteractive sudo), verifies it, and the guardian monitors this prohibition. The host's global swap configuration is not changed. See approved amendments in `docs/` and measured limitations in `docs/HARDWARE-NOTES.md`. SSH survival cannot be guaranteed against rapid unaccounted allocations.
@@ -40,7 +40,7 @@ Upload PNG/JPEG/WebP <=10MiB and16MP, enter prompt and optional seed, generate. 
 On the same page, select **「動画を1080p化」**. Upload a video, wait for validation, then select **「高解像度化」**. No image-generation step or prompt is required. Input preview, progress, cancellation, history and MP4 download are provided; silent inputs do not acquire nonexistent audio-download links.
 
 Initial supported inputs:
-- MP4 with one H264/yuv420p video stream; up to100MiB.
+- Self-contained MP4 or MOV with one H264/yuv420p video stream; up to100MiB. HEVC, ProRes and PCM are not currently supported. Validated previews use normalized MP4 even when the original MOV cannot play directly in the browser.
 - Landscape,256–1280px wide and144–720px high, within1% of16:9, square pixels, no rotation.
 - 0.25–3 seconds, constant1–60fps. Output is1920×1080 at24fps; normalized frame count is6–72.
 - Optional AAC audio,1–2 channels, up to48kHz. Audio is copied, not re-encoded; unsupported timing offsets are rejected. Short audio never truncates the video.

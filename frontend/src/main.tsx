@@ -74,10 +74,10 @@ function App(){
  <label>解像度設定<select value={spatialTokens} onChange={e=>setSpatialTokens(Number(e.target.value))}><option value={220}>軽量 — 220トークン</option><option value={440}>中間 — 440トークン</option><option value={880}>公式 — 880トークン</option></select></label>
  <p>69フレーム（約2.88秒）・50ステップ。実際の縦横サイズは画像に合わせます。高解像度ほどRAMと時間を使います。2K化は未対応。</p>
  <button disabled={busy||running||!status?.runtime_ready||!file||!prompt.trim()}>音声付き動画を生成</button></form>:<form onSubmit={refine}>
- <p>横動画・0.25〜3秒・720p以下・100MiB以内のMP4（H264/AAC）。出力は1920×1080・24fps固定です。対応範囲の実機確認前は実行できません。</p>
+ <p>横動画・0.25〜3秒・720p以下・100MiB以内のMP4 / MOV（H264/AAC）。出力は1920×1080・24fps固定です。対応範囲の実機確認前は実行できません。</p>
  <p>画質や顔の改善は保証しません。口を閉じる、発話を除く、本人性を補正する機能ではありません。</p>
- <label>入力動画<input type="file" accept="video/mp4,.mp4" disabled={busy||running||uploading||!status?.video_validation_ready} onChange={e=>void uploadVideo(e.target.files?.[0]||null)}/></label>
- {videoPreview&&<video controls src={videoPreview} aria-label="入力動画"/>}
+ <label>入力動画<input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={busy||running||uploading||!status?.video_validation_ready} onChange={e=>void uploadVideo(e.target.files?.[0]||null)}/></label>
+ {videoInput?<><p>検証済み入力（24fpsのMP4）</p><video controls src={'/api/video-inputs/'+videoInput.input_id+'/preview'} aria-label="入力動画"/></>:videoPreview&&<><p>MOVなどブラウザ非対応形式のプレビューは検証後に表示します。</p>{videoFile?.type!=='video/quicktime'&&!videoFile?.name.toLowerCase().endsWith('.mov')&&<video controls src={videoPreview} aria-label="入力動画"/>}</>}
  {uploading&&<p role="status">アップロード・動画検証中… <button type="button" onClick={()=>uploadAbort.current?.abort()}>アップロード接続を中断</button>（検証開始後は停止確認まで受付を保持します）</p>}
  {videoInput&&<p>{videoInput.width}×{videoInput.height} ／ {videoInput.duration_seconds}秒 ／ 入力{videoInput.source_fps}fps → 出力24fps・{videoInput.normalized_frames}フレーム ／ {videoInput.has_audio?'音声あり':'無音'}</p>}
  <button disabled={busy||running||uploading||!videoInput||!status?.refiner_ready}>高解像度化</button>

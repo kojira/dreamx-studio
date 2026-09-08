@@ -43,10 +43,24 @@ class VideoValidatorTests(unittest.TestCase):
         with self.assertRaisesRegex(InvalidVideo, 'UNSUPPORTED_VIDEO'):
             validator.self_contained_mp4(self.source)
 
-    def test_quicktime_only_rejected(self):
+    def test_quicktime_container_accepted(self):
         self.source.write_bytes(movie(brand=b'qt  '))
+        validator.self_contained_mp4(self.source)
+
+    def test_legacy_mov_requires_structural_movie_and_data(self):
+        data = movie()
+        ftyp_size = struct.unpack('>I', data[:4])[0]
+        self.source.write_bytes(data[ftyp_size:])
+        validator.self_contained_mp4(self.source)
+        self.source.write_bytes(data[ftyp_size:-len(atom(b'mdat', b'dummy'))])
         with self.assertRaises(InvalidVideo):
             validator.self_contained_mp4(self.source)
+
+    def test_mov_external_reference_and_unknown_brand_rejected(self):
+        for data in (movie(flags=0, brand=b'qt  '), movie(brand=b'xxxx')):
+            self.source.write_bytes(data)
+            with self.assertRaises(InvalidVideo):
+                validator.self_contained_mp4(self.source)
 
     def test_malformed_boxes_rejected(self):
         for payload in (b'', b'1234', movie()[:-2], struct.pack('>I4s', 7, b'moov'),
