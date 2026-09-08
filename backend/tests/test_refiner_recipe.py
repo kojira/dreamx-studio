@@ -7,10 +7,26 @@ import time
 import unittest
 from unittest.mock import patch
 from dreamx.video_contract import RECIPE, padded_frames
-from dreamx.refiner_recipe import final_command, inference_command
+from dreamx.refiner_recipe import final_command, inference_command, segment_counts, split_command
 
 
 class RefinerRecipeTests(unittest.TestCase):
+    def test_segments_keep_every_frame_and_use_one_model_process(self):
+        self.assertEqual(segment_counts(376, 25), [125, 125, 125, 1])
+        self.assertEqual(segment_counts(450, 29.97), [149, 149, 149, 3])
+        self.assertEqual(segment_counts(72, 24), [72])
+        args = inference_command(376, segmented=True)
+        self.assertEqual(args[args.index('--input_path') + 1], '/job/chunks')
+        self.assertEqual(args[args.index('--num_frames') + 1], '-2')
+        self.assertIn('--no-keep_audio', args)
+        split = split_command(376, 25)
+        self.assertEqual(split[split.index('-segment_frames') + 1], '125,250,375')
+        self.assertEqual(split[split.index('-crf') + 1], '0')
+        final = final_command('/job/refined.txt', 376, 896, 512, True, concat=True)
+        self.assertEqual(final[final.index('-f') + 1], 'concat')
+        self.assertIn('1:a:0', final)
+        self.assertNotIn('-shortest', final)
+
     def test_fixed_recipe_and_processing_padding(self):
         for frames, processing in ((6, 9), (24, 25), (68, 69), (69, 69), (72, 73)):
             args = inference_command(frames)

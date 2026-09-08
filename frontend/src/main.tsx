@@ -59,7 +59,7 @@ function App(){
   finally{uploadAbort.current=null;setUploading(false);}
  }
  async function refine(e:React.FormEvent){e.preventDefault();if(!videoInput&&!videoFile)return;setBusy(true);setError('');
-  try{const input=videoInput||await uploadVideo(videoFile);if(!input)return;const result=await api('/refiner-jobs',{method:'POST',headers:{'content-type':'application/json','idempotency-key':refineKey.current},body:JSON.stringify({input_id:input.input_id})});setJob(await api('/jobs/'+result.job_id));}
+  try{const input=videoInput||await uploadVideo(videoFile);if(!input)return;if(job&&terminal.has(job.state))refineKey.current=crypto.randomUUID();const result=await api('/refiner-jobs',{method:'POST',headers:{'content-type':'application/json','idempotency-key':refineKey.current},body:JSON.stringify({input_id:input.input_id})});setJob(await api('/jobs/'+result.job_id));}
   catch(e){setError(String(e));}finally{setBusy(false);}
  }
  const running=!!job&&!terminal.has(job.state);
@@ -76,7 +76,7 @@ function App(){
  <label>解像度設定<select value={spatialTokens} onChange={e=>setSpatialTokens(Number(e.target.value))}><option value={220}>軽量 — 220トークン</option><option value={440}>中間 — 440トークン</option><option value={880}>公式 — 880トークン</option></select></label>
  <p>69フレーム（約2.88秒）・50ステップ。実際の縦横サイズは画像に合わせます。高解像度ほどRAMと時間を使います。2K化は未対応。</p>
  <button disabled={busy||running||!status?.runtime_ready||!file||!prompt.trim()}>音声付き動画を生成</button></form>:<form onSubmit={refine}>
- <p>動画を選んでfpsを指定し、「高解像度化」を押してください。事前検証はありません。必要な変換を行い、失敗した場合はエラーを表示します。100MiBまで、長さ制限なし。出力は1920×1080です。</p>
+ <p>動画を選んでfpsを指定し、「高解像度化」を押してください。事前検証はありません。必要な変換を行い、失敗した場合はエラーを表示します。100MiBまで、長さ制限なし。出力は1920×1080です。長い動画は約5秒ずつ処理して最後に結合します。</p>
  <p>画質や顔の改善は保証しません。口を閉じる、発話を除く、本人性を補正する機能ではありません。</p>
  <label>出力fps<input type="number" step="any" required value={outputFps} disabled={busy||running||uploading} onChange={e=>{setOutputFps(e.target.value);setVideoInput(null);}}/></label>
  {error&&<p role="alert" className="error">変換・処理に失敗しました：{error}</p>}

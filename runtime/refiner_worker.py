@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 
-from dreamx.refiner_recipe import final_command, inference_command
+from dreamx.refiner_recipe import final_command, inference_command, segment_counts, split_command
 from dreamx.video_contract import RECIPE, padded_frames, output_rate, rate
 
 
@@ -91,19 +91,31 @@ class Worker:
         if original != spec['normalized_sha256']:
             raise ValueError('Input checksum mismatch')
         print('REFINER_PHASE preparing', flush=True)
-        self.run(inference_command(frames), cwd='/opt/dreamx/video_refiner')
+        counts = segment_counts(frames, fps)
+        segmented = len(counts) > 1
+        if segmented:
+            (self.job / 'chunks').mkdir()
+            self.run(split_command(frames, fps))
+            if len(list((self.job / 'chunks').glob('*.mp4'))) != len(counts):
+                raise ValueError('Segment split count mismatch')
+            processing = sum(padded_frames(n) for n in counts)
+        self.run(inference_command(frames, segmented), cwd='/opt/dreamx/video_refiner')
         print('REFINER_PHASE muxing', flush=True)
-        outputs = list((self.job / 'refined').glob('*.mp4'))
-        if len(outputs) != 1 or outputs[0].is_symlink():
-            raise ValueError('Expected one refined video')
+        outputs = sorted((self.job / 'refined').glob('*.mp4'))
+        if len(outputs) != len(counts) or any(p.is_symlink() for p in outputs):
+            raise ValueError('Refined segment count mismatch')
+        for index, (part, count) in enumerate(zip(outputs, counts)):
+            if segmented and not part.name.startswith(f'{index:06d}__'):
+                raise ValueError('Refined segment order mismatch')
+            intermediate = self.probe(part)
+            video = next(s for s in intermediate['streams'] if s['codec_type'] == 'video')
+            if int(video['nb_read_frames']) != count or (video['width'], video['height']) != (1920, 1088):
+                raise ValueError('Refiner processing frame/size mismatch')
         refined = outputs[0]
-        intermediate = self.probe(refined)
-        video = next(s for s in intermediate['streams'] if s['codec_type'] == 'video')
-        # Pinned upstream pads tensors to P, then writes video_out[:T_pixel].
-        # T_pixel is the original N, so processing padding is already removed.
-        if int(video['nb_read_frames']) != frames or (video['width'], video['height']) != (1920, 1088):
-            raise ValueError('Refiner processing frame/size mismatch')
-        self.run(final_command(refined, frames, spec['width'], spec['height'], spec['has_audio']))
+        if segmented:
+            refined = self.job / 'refined.txt'
+            refined.write_text(''.join(f"file 'refined/{part.name}'\n" for part in outputs))
+        self.run(final_command(refined, frames, spec['width'], spec['height'], spec['has_audio'], concat=segmented))
         media = self.probe(self.job / 'output.mp4')
         videos = [s for s in media['streams'] if s['codec_type'] == 'video']
         audios = [s for s in media['streams'] if s['codec_type'] == 'audio']
@@ -122,6 +134,7 @@ class Worker:
             raise ValueError('Source changed')
         (self.job / 'refiner-evidence.json').write_text(json.dumps({
             'recipe': RECIPE, 'frames': frames, 'processing_frames': processing, 'output_fps': float(fps),
+            'segment_frames': counts,
             'source_sha256': original, 'output_sha256': digest(self.job / 'output.mp4'),
             'audio_stream_unchanged': True, 'media': media,
         }))

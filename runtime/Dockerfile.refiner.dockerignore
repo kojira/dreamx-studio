@@ -8,4 +8,5 @@
 !runtime/patch_refiner_attention.py
 !runtime/patch_refiner_audio.py
 !runtime/patch_refiner_fps.py
+!runtime/patch_refiner_segments.py
 !runtime/Dockerfile.refiner
