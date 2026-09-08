@@ -104,6 +104,22 @@ class VideoValidatorTests(unittest.TestCase):
             self.assertIn('-xerror', run.call_args.args[0])
             self.assertIn('explode', run.call_args.args[0])
 
+    def test_conversion_does_not_run_prevalidation_or_full_output_decode(self):
+        self.source.write_bytes(b'input')
+        output = self.source.parent / 'output.mp4'
+        original = {'streams': [{'codec_type': 'video', 'avg_frame_rate': '25/1'}]}
+        converted = {'streams': [{'codec_type': 'video', 'width': 896, 'height': 512, 'duration': '15.04', 'nb_frames': '376'}]}
+        with patch.object(validator, 'probe', side_effect=[original, converted]) as probe, \
+             patch.object(validator, 'run', side_effect=lambda args: output.write_bytes(b'output')) as run, \
+             patch.object(validator, 'self_contained_mp4', side_effect=AssertionError('No structural gate')), \
+             patch.object(validator, 'decoded_frames', side_effect=AssertionError('No predecode')), \
+             patch.object(validator, 'normalized_contract', side_effect=AssertionError('No postdecode gate')), \
+             patch.object(validator, 'audio_hash', side_effect=AssertionError('No audio prehash')):
+            result = validator.validate(self.source, output, 25)
+            self.assertEqual(result['normalized_frames'], 376)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(probe.call_args_list, [unittest.mock.call(self.source), unittest.mock.call(output)])
+
     def test_nonzero_decoder_exit_is_not_success(self):
         with patch.object(validator.subprocess, 'run') as run:
             run.return_value.returncode = 1

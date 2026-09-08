@@ -165,11 +165,9 @@ def validate(source, output, output_fps=OUTPUT_FPS):
     output_fps = output_rate(output_fps)
     if source.is_symlink() or not source.is_file() or output.exists() or output.is_symlink():
         raise InvalidVideo()
-    self_contained_mp4(source)
+    # Read headers only to preserve timing; do not pre-decode or gate formats.
     original_probe = probe(source)
-    metadata = probe_contract(original_probe, output_fps)
     video = next(s for s in original_probe['streams'] if s['codec_type'] == 'video')
-    original_count = decoded_frames(source, video)
     timing_stream = next((s for s in original_probe['streams'] if s['codec_type'] == 'audio'), video)
     audio_offset = -number(timing_stream.get('start_time', 0))
     arguments = ['ffmpeg', '-nostdin', '-n', '-v', 'error', '-xerror',
@@ -180,10 +178,16 @@ def validate(source, output, output_fps=OUTPUT_FPS):
                  '-crf', '18', '-pix_fmt', 'yuv420p', '-threads', '2', '-c:a', 'copy',
                  '-map_metadata', '-1', '-movflags', '+faststart', str(output)]
     run(arguments)
-    result_probe = probe(output, count=True)
-    count = normalized_contract(result_probe, metadata, output_fps)
-    if metadata['has_audio'] and audio_hash(source) != audio_hash(output):
-        raise InvalidVideo('UNSUPPORTED_AUDIO_TIMING')
+    result_probe = probe(output)
+    converted = next(s for s in result_probe['streams'] if s['codec_type'] == 'video')
+    count = int(converted['nb_frames'])
+    try:
+        source_fps = float(rate(video['avg_frame_rate']))
+    except (InvalidVideo, KeyError):
+        source_fps = None
+    metadata = {'width': converted['width'], 'height': converted['height'],
+                'duration_seconds': number(converted['duration']), 'source_fps': source_fps,
+                'has_audio': any(s['codec_type'] == 'audio' for s in result_probe['streams'])}
     return {**metadata, 'normalized_frames': count, 'normalized_fps': float(output_fps),
             'raw_sha256': sha256(source), 'normalized_sha256': sha256(output)}
 

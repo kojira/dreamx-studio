@@ -89,10 +89,10 @@ class VideoValidation:
                 raise ValidationFailure('INVALID_VIDEO')
             metadata = result['metadata']
             padded_frames(metadata['normalized_frames'])
-            for field, minimum, maximum in (('width', 256, 1280), ('height', 144, 720)):
-                if type(metadata[field]) is not int or not minimum <= metadata[field] <= maximum:
+            for field in ('width', 'height'):
+                if type(metadata[field]) is not int or metadata[field] <= 0:
                     raise ValidationFailure('INVALID_VIDEO')
-            if number(metadata['duration_seconds']) <= 0 or not 1 <= number(metadata['source_fps']) <= 60:
+            if number(metadata['duration_seconds']) <= 0:
                 raise ValidationFailure('INVALID_VIDEO')
             if type(metadata['has_audio']) is not bool or metadata.get('normalized_fps') != output_fps:
                 raise ValidationFailure('INVALID_VIDEO')
