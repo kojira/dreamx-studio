@@ -1,8 +1,16 @@
 # Implementation checkpoint
 
-Issue #1. Branch feat/dreamx-studio-v1.
+Issue #1. Branch feat/refiner-1080-v2.
 
-## Current handoff — takes precedence over historical milestones below
+## Current v2 checkpoint — supersedes the earlier handoff below
+
+- User instructed proceeding without waiting for routine judgments after the v2 design was presented. Direction recorded in DESIGN-v2-refiner-1080p.md and Issue #1; branch created from88a22ca. This is not PR/merge authorization.
+- Implementation subagent was stopped by an extension-session reload, not by a design blocker. Its partial jobs.py change was preserved; parent resumed as sole writer after confirming the child stopped. No review ran in that interrupted workflow.
+- First local slice: additive video_inputs/operations migration, atomic job+lease admission, validation reservation, owner-bound container tracking and explicit stopped-container release. Ten regression tests cover cross-kind contention, duplicate requests, cancellation/stop-unconfirmed retention and restart reconciliation. All56 backend tests pass. This is foundation only: API, runner, isolated validator, Refiner worker/image and UI wiring remain unfinished, with independent review and real UI/hardware validation pending. No v2 deployment yet.
+- Parent prepared a public synthetic720p/30fps/3s input outside the repository for the designed72-frame24fps upper-bound acceptance case. Do not claim that test passed before running it through the integrated UI.
+- Keep task24 enabled. Preserve8GiB actual-host guard, no GPU worker RAM cap, exact-worker zero swap, heartbeats,180minute timeout and stopped services. Closed-mouth clone intent remains unmet; prior successful operator1080 test is not end-use acceptance or v2 UI acceptance.
+
+## Earlier handoff (historical; newer facts above take precedence)
 
 - Base880 generation completed in19m02s, but user subsequently rejected its suitability for cloning: the intended behavior was mouth closed/no speaking. Runtime/resolution success is NOT acceptance of that behavior. No guarantee or workaround for closed-mouth generation has been validated. PR/merge approval remains outstanding.
 - Refiner weights downloaded and hash verified (see REFINER-DOWNLOAD.md). Standalone testing was subsequently authorized; it is no longer merely a download-only request.
