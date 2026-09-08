@@ -42,8 +42,10 @@ On the same page, select **「動画を1080p化」**. Upload a video, wait for v
 Initial supported inputs:
 - Self-contained MP4 or MOV with one H264/yuv420p video stream; up to100MiB. HEVC, ProRes and PCM are not currently supported. Validated previews use normalized MP4 even when the original MOV cannot play directly in the browser.
 - Landscape,256–1280px wide and144–720px high, within1% of16:9, square pixels, no rotation.
-- 0.25–3 seconds, constant1–60fps. Output is1920×1080 at24fps; normalized frame count is6–72.
+- No duration or frame-count admission ceiling. Input remains constant1–60fps. Output is1920×1080 with a user-entered positive numeric fps (default24; fractional rates supported). Set fps before upload, or revalidate after changing it.
 - Optional AAC audio,1–2 channels, up to48kHz. Audio is copied, not re-encoded; unsupported timing offsets are rejected. Short audio never truncates the video.
+
+The remaining format bounds are limits of this UI implementation, not established universal model limits. Long clips are enabled without waiting for a long GPU trial, as requested; they have not been GPU-validated and may exhaust resources. Existing CPU isolation/timeouts and GPU emergency stopping remain unchanged. Portrait output is not implemented. MOV playback support itself depends on the browser and contained codecs; the app uses a normalized MP4 preview rather than assuming every MOV is unplayable.
 
 Validation and GPU jobs share one persistent operation lease. Interrupting an upload stops its connection; after validation begins the host retains its lease until the exact CPU container is confirmed stopped. Inputs/results are not automatically pruned.
 

@@ -12,7 +12,7 @@ import subprocess
 
 from dreamx.video_contract import (
     InvalidVideo, MAX_UPLOAD_BYTES, OUTPUT_FPS, normalized_contract,
-    number, probe_contract, rate,
+    number, probe_contract, rate, output_rate,
 )
 
 
@@ -128,7 +128,7 @@ def decoded_frames(path, stream):
     ]))
     frames = data.get('frames', [])
     fps = rate(stream['avg_frame_rate'])
-    if not frames or len(frames) > 180:
+    if not frames:
         raise InvalidVideo('INVALID_DURATION')
     start = number(frames[0]['best_effort_timestamp_time'])
     tick = float(rate(stream['time_base']))
@@ -159,12 +159,13 @@ def audio_hash(path):
                 '-f', 'hash', '-hash', 'sha256', '-']).decode().strip()
 
 
-def validate(source, output):
+def validate(source, output, output_fps=OUTPUT_FPS):
+    output_fps = output_rate(output_fps)
     if source.is_symlink() or not source.is_file() or output.exists() or output.is_symlink():
         raise InvalidVideo()
     self_contained_mp4(source)
     original_probe = probe(source)
-    metadata = probe_contract(original_probe)
+    metadata = probe_contract(original_probe, output_fps)
     video = next(s for s in original_probe['streams'] if s['codec_type'] == 'video')
     original_count = decoded_frames(source, video)
     timing_stream = next((s for s in original_probe['streams'] if s['codec_type'] == 'audio'), video)
@@ -173,24 +174,24 @@ def validate(source, output):
                  '-protocol_whitelist', 'file', '-enable_drefs', '0', '-threads', '2',
                  '-copyts', '-itsoffset', str(audio_offset),
                  '-i', str(source), '-map', '0:v:0', '-map', '0:a:0?',
-                 '-vf', 'setpts=PTS-STARTPTS,fps=24,setsar=1', '-c:v', 'libx264', '-preset', 'fast',
+                 '-vf', f'setpts=PTS-STARTPTS,fps={output_fps}:round=up,setsar=1', '-c:v', 'libx264', '-preset', 'fast',
                  '-crf', '18', '-pix_fmt', 'yuv420p', '-threads', '2', '-c:a', 'copy',
                  '-map_metadata', '-1', '-movflags', '+faststart', str(output)]
     run(arguments)
     result_probe = probe(output, count=True)
-    count = normalized_contract(result_probe, metadata)
-    if rate(video['avg_frame_rate']) == OUTPUT_FPS and count != original_count:
+    count = normalized_contract(result_probe, metadata, output_fps)
+    if rate(video['avg_frame_rate']) == output_fps and count != original_count:
         raise InvalidVideo('INVALID_DURATION')
     if metadata['has_audio'] and audio_hash(source) != audio_hash(output):
         raise InvalidVideo('UNSUPPORTED_AUDIO_TIMING')
-    return {**metadata, 'normalized_frames': count, 'normalized_fps': OUTPUT_FPS,
+    return {**metadata, 'normalized_frames': count, 'normalized_fps': float(output_fps),
             'raw_sha256': sha256(source), 'normalized_sha256': sha256(output)}
 
 
 def main():
     os.umask(0o077)
     try:
-        result = {'metadata': validate(Path('/input.mp4'), Path('/work/normalized.mp4'))}
+        result = {'metadata': validate(Path('/input.mp4'), Path('/work/normalized.mp4'), os.environ.get('DREAMX_OUTPUT_FPS', OUTPUT_FPS))}
     except InvalidVideo as error:
         result = {'error': error.code}
     except Exception:

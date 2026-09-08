@@ -49,6 +49,9 @@ class Jobs:
                 );
                 COMMIT;
             ''')
+            db.execute('BEGIN IMMEDIATE')
+            if 'normalized_fps' not in {r['name'] for r in db.execute('PRAGMA table_info(video_inputs)')}:
+                db.execute('ALTER TABLE video_inputs ADD COLUMN normalized_fps REAL NOT NULL DEFAULT 24')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=5)
@@ -144,7 +147,8 @@ class Jobs:
             db.execute("UPDATE video_inputs SET state='failed' WHERE id=? AND state!='validated'",(input_id,))
 
     def finish_video(self, input_id, metadata):
-        keys=('width','height','duration_seconds','source_fps','normalized_frames','has_audio','raw_sha256','normalized_sha256')
+        metadata = {'normalized_fps': 24, **metadata}
+        keys=('width','height','duration_seconds','source_fps','normalized_frames','has_audio','raw_sha256','normalized_sha256','normalized_fps')
         with self.connect() as db:
             if db.execute("UPDATE video_inputs SET state='validated',"+','.join(k+'=?' for k in keys)+" WHERE id=? AND state='validating'",(*[metadata[k] for k in keys],input_id)).rowcount!=1:
                 raise Conflict('Input no longer validating')

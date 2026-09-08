@@ -9,7 +9,7 @@ import tempfile
 import time
 
 from dreamx.refiner_recipe import final_command, inference_command
-from dreamx.video_contract import RECIPE, padded_frames
+from dreamx.video_contract import RECIPE, padded_frames, output_rate, rate
 
 
 class Worker:
@@ -72,6 +72,7 @@ class Worker:
         spec = self.spec
         if spec.get('kind') != 'refine' or spec.get('recipe') != RECIPE or spec.get('seed') != 42:
             raise ValueError('Unsupported recipe')
+        fps = output_rate(spec.get('output_fps', 24))
         frames = spec['frames']
         processing = padded_frames(frames)
         deadline = time.monotonic() + 30
@@ -109,18 +110,18 @@ class Worker:
         if len(videos) != 1 or len(audios) != int(spec['has_audio']):
             raise ValueError('Output stream mismatch')
         video = videos[0]
-        if (video['width'], video['height'], int(video['nb_read_frames']), video['avg_frame_rate']) != (1920, 1080, frames, '24/1'):
+        if (video['width'], video['height'], int(video['nb_read_frames'])) != (1920, 1080, frames) or abs(float(rate(video['avg_frame_rate']) / fps) - 1) > 1e-6:
             raise ValueError('Output dimensions/frame mismatch')
         if video['codec_name'] != 'h264' or video['pix_fmt'] != 'yuv420p' or video.get('sample_aspect_ratio') != '1:1':
             raise ValueError('Output format mismatch')
-        if abs(float(video['duration']) - frames / 24) > 1e-6:
+        if abs(float(video['duration']) - float(frames / fps)) > 1e-6:
             raise ValueError('Output duration mismatch')
         if spec['has_audio'] and self.audio_hash(source) != self.audio_hash(self.job / 'output.mp4'):
             raise ValueError('Audio checksum mismatch')
         if digest(source) != original:
             raise ValueError('Source changed')
         (self.job / 'refiner-evidence.json').write_text(json.dumps({
-            'recipe': RECIPE, 'frames': frames, 'processing_frames': processing,
+            'recipe': RECIPE, 'frames': frames, 'processing_frames': processing, 'output_fps': float(fps),
             'source_sha256': original, 'output_sha256': digest(self.job / 'output.mp4'),
             'audio_stream_unchanged': True, 'media': media,
         }))

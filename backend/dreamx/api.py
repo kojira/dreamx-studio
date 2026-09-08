@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
 from .auth import Sessions, Unauthorized, RateLimited, check_origin
@@ -21,14 +21,14 @@ class Runner(Protocol):
     def status(self) -> dict: ...
     def submit(self, job: dict) -> None: ...
     def cancel(self, job_id: str) -> None: ...
-    def validate_video(self, input_id: str) -> dict: ...
+    def validate_video(self, input_id: str, output_fps: float=24) -> dict: ...
     def cancel_validation(self, input_id: str) -> dict: ...
 
 class UnavailableRunner:
     def status(self): return {'runtime_ready':False,'reason':'RUNNER_NOT_READY','active_job_id':None}
     def submit(self,job): raise RuntimeError('Runner unavailable')
     def cancel(self,job_id): raise RuntimeError('Runner unavailable')
-    def validate_video(self,input_id): raise RuntimeError('RUNNER_NOT_READY')
+    def validate_video(self,input_id,output_fps=24): raise RuntimeError('RUNNER_NOT_READY')
     def cancel_validation(self,input_id): raise RuntimeError('RUNNER_NOT_READY')
 
 class JobRequest(BaseModel):
@@ -120,7 +120,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
         except InvalidImage as exc: raise HTTPException(422,str(exc))
 
     @app.post('/api/video-inputs', status_code=201)
-    async def upload_video(request: Request):
+    async def upload_video(request: Request, output_fps: float = Query(default=24, gt=0, allow_inf_nan=False)):
         availability = await asyncio.to_thread(runner.status)
         if availability.get('reason') == 'BUSY' or jobs.operation():
             raise HTTPException(409, 'BUSY')
@@ -159,7 +159,7 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
             if not size:
                 raise HTTPException(422, 'INVALID_VIDEO')
             started = True
-            validation = asyncio.create_task(asyncio.to_thread(runner.validate_video, identity))
+            validation = asyncio.create_task(asyncio.to_thread(runner.validate_video, identity, **({'output_fps': output_fps} if output_fps != 24 else {})))
             # Observe errors even when the browser/server cancels this request.
             validation.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
             async def disconnected():
@@ -271,6 +271,8 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
             raise HTTPException(422, 'IDEMPOTENCY_KEY_REQUIRED')
         payload = {'kind': 'refine', 'input_id': body.input_id, 'recipe': RECIPE,
                    'seed': 42, 'frames': metadata['normalized_frames'], 'has_audio': bool(metadata['has_audio'])}
+        if metadata['normalized_fps'] != 24:
+            payload['output_fps'] = metadata['normalized_fps']
         with jobs.connect() as db:
             previous = db.execute('SELECT * FROM jobs WHERE request_id=?', (request_id,)).fetchone()
         if previous:

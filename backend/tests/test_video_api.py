@@ -25,7 +25,7 @@ class VideoRunner:
         return {'runtime_ready': not self.busy, 'video_validation_ready': not self.busy,
                 'reason': 'BUSY' if self.busy else None, 'refiner_ready': self.refiner and not self.busy}
 
-    def validate_video(self, identity):
+    def validate_video(self, identity, output_fps=24):
         self.calls.append(identity)
         if self.error:
             raise RuntimeError(self.error)
@@ -34,11 +34,11 @@ class VideoRunner:
         raw, work = video_paths(self.root, identity)
         (work / 'normalized.mp4').write_bytes(raw.read_bytes())
         metadata = dict(width=1280, height=720, duration_seconds=3, source_fps=30,
-                        normalized_frames=72, has_audio=False,
+                        normalized_frames=round(3 * output_fps), normalized_fps=output_fps, has_audio=False,
                         raw_sha256='a' * 64, normalized_sha256='b' * 64)
         jobs.finish_video(identity, metadata)
         jobs.release_stopped(identity)
-        return {**metadata, 'input_id': identity, 'normalized_fps': 24}
+        return {**metadata, 'input_id': identity, 'normalized_fps': output_fps}
 
     def submit(self, job):
         self.submitted.append(job['id'])
@@ -72,6 +72,25 @@ class VideoApiTests(unittest.TestCase):
         self.assertEqual(preview.status_code, 200)
         self.assertEqual(preview.content, b'synthetic')
         self.assertEqual(self.runner.cancelled, [])
+
+    def test_selected_fps_persisted_and_submitted(self):
+        response = self.client.post('/api/video-inputs?output_fps=30', content=b'synthetic', headers=self.headers)
+        self.assertEqual(response.status_code, 201, response.text)
+        identity = response.json()['input_id']
+        self.assertEqual(self.app.state.jobs.video(identity)['normalized_fps'], 30)
+        self.runner.refiner = True
+        headers = {**self.headers, 'content-type': 'application/json', 'idempotency-key': 'fps30'}
+        result = self.client.post('/api/refiner-jobs', json={'input_id': identity}, headers=headers)
+        self.assertEqual(result.status_code, 202, result.text)
+        import json
+        payload = json.loads(self.app.state.jobs.get(result.json()['job_id'])['payload'])
+        self.assertEqual((payload['output_fps'], payload['frames']), (30, 90))
+
+    def test_invalid_fps_rejected_before_upload(self):
+        for fps in ('0', '-1', 'nan', 'inf', 'hello'):
+            result = self.client.post('/api/video-inputs?output_fps=' + fps, content=b'x', headers=self.headers)
+            self.assertEqual(result.status_code, 422)
+        self.assertEqual(self.runner.calls, [])
 
     def test_auth_and_csrf_required(self):
         response = self.client.post('/api/video-inputs', content=b'x', headers=self.origin)

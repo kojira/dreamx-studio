@@ -15,6 +15,7 @@ function App(){
  const [spatialTokens,setSpatialTokens]=useState(880);
  const [mode,setMode]=useState<'generate'|'refine'>('generate');
  const [videoFile,setVideoFile]=useState<File|null>(null),[videoPreview,setVideoPreview]=useState('');
+ const [outputFps,setOutputFps]=useState('24');
  const [videoInput,setVideoInput]=useState<VideoInput|null>(null),[uploading,setUploading]=useState(false);
  const uploadAbort=useRef<AbortController|null>(null),refineKey=useRef('');
  useEffect(()=>{if(!videoFile){setVideoPreview('');return;}const url=URL.createObjectURL(videoFile);setVideoPreview(url);return()=>URL.revokeObjectURL(url);},[videoFile]);
@@ -50,9 +51,10 @@ function App(){
  async function uploadVideo(selected:File|null){
   setVideoFile(selected);setVideoInput(null);setError('');refineKey.current='';
   if(!selected)return;
+  if(!Number.isFinite(Number(outputFps))||Number(outputFps)<=0){setError('fpsは0より大きい数値を入力してください');return;}
   if(selected.size>100*1024*1024){setError('動画は100MiB以内にしてください（UPLOAD_TOO_LARGE）');return;}
   const controller=new AbortController();uploadAbort.current=controller;setUploading(true);
-  try{const result=await api('/video-inputs',{method:'POST',headers:{'content-type':'application/octet-stream'},body:selected,signal:controller.signal});setVideoInput(result);refineKey.current=crypto.randomUUID();}
+  try{const result=await api('/video-inputs?output_fps='+encodeURIComponent(outputFps),{method:'POST',headers:{'content-type':'application/octet-stream'},body:selected,signal:controller.signal});setVideoInput(result);refineKey.current=crypto.randomUUID();}
   catch(e){if(!controller.signal.aborted)setError(String(e));}
   finally{uploadAbort.current=null;setUploading(false);}
  }
@@ -74,19 +76,21 @@ function App(){
  <label>解像度設定<select value={spatialTokens} onChange={e=>setSpatialTokens(Number(e.target.value))}><option value={220}>軽量 — 220トークン</option><option value={440}>中間 — 440トークン</option><option value={880}>公式 — 880トークン</option></select></label>
  <p>69フレーム（約2.88秒）・50ステップ。実際の縦横サイズは画像に合わせます。高解像度ほどRAMと時間を使います。2K化は未対応。</p>
  <button disabled={busy||running||!status?.runtime_ready||!file||!prompt.trim()}>音声付き動画を生成</button></form>:<form onSubmit={refine}>
- <p>横動画・0.25〜3秒・720p以下・100MiB以内のMP4 / MOV（H264/AAC）。出力は1920×1080・24fps固定です。対応範囲の実機確認前は実行できません。</p>
+ <p>動画の長さ制限はありません。横動画・720p以下・100MiB以内のMP4 / MOV（H264/AAC）。出力は1920×1080、fpsは下の数値で指定します。長尺はGPU未検証で、処理時間やメモリ使用量が増える場合があります。</p>
  <p>画質や顔の改善は保証しません。口を閉じる、発話を除く、本人性を補正する機能ではありません。</p>
+ <label>出力fps<input type="number" step="any" required value={outputFps} disabled={busy||running||uploading} onChange={e=>{setOutputFps(e.target.value);setVideoInput(null);}}/></label>
+ {videoFile&&!videoInput&&!uploading&&<button type="button" disabled={busy||running||!status?.video_validation_ready} onClick={()=>void uploadVideo(videoFile)}>このfpsで検証</button>}
  <label>入力動画<input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={busy||running||uploading||!status?.video_validation_ready} onChange={e=>void uploadVideo(e.target.files?.[0]||null)}/></label>
- {videoInput?<><p>検証済み入力（24fpsのMP4）</p><video controls src={'/api/video-inputs/'+videoInput.input_id+'/preview'} aria-label="入力動画"/></>:videoPreview&&<><p>MOVなどブラウザ非対応形式のプレビューは検証後に表示します。</p>{videoFile?.type!=='video/quicktime'&&!videoFile?.name.toLowerCase().endsWith('.mov')&&<video controls src={videoPreview} aria-label="入力動画"/>}</>}
+ {videoInput?<><p>検証済み入力（{videoInput.normalized_fps}fpsのMP4）</p><video controls src={'/api/video-inputs/'+videoInput.input_id+'/preview'} aria-label="入力動画"/></>:videoPreview&&<><p>検証後、MP4形式に正規化した動画をプレビューします。</p>{videoFile?.type!=='video/quicktime'&&!videoFile?.name.toLowerCase().endsWith('.mov')&&<video controls src={videoPreview} aria-label="入力動画"/>}</>}
  {uploading&&<p role="status">アップロード・動画検証中… <button type="button" onClick={()=>uploadAbort.current?.abort()}>アップロード接続を中断</button>（検証開始後は停止確認まで受付を保持します）</p>}
- {videoInput&&<p>{videoInput.width}×{videoInput.height} ／ {videoInput.duration_seconds}秒 ／ 入力{videoInput.source_fps}fps → 出力24fps・{videoInput.normalized_frames}フレーム ／ {videoInput.has_audio?'音声あり':'無音'}</p>}
+ {videoInput&&<p>{videoInput.width}×{videoInput.height} ／ {videoInput.duration_seconds}秒 ／ 入力{videoInput.source_fps}fps → 出力{videoInput.normalized_fps}fps・{videoInput.normalized_frames}フレーム ／ {videoInput.has_audio?'音声あり':'無音'}</p>}
  <button disabled={busy||running||uploading||!videoInput||!status?.refiner_ready}>高解像度化</button>
  {!status?.refiner_ready&&<p>高解像度化は準備中、または他の処理が実行中です。</p>}
  </form>}
  {job&&<section><h2>{phases[job.state==='cancelling'?'cancelling':job.progress?.phase||job.state]||job.state}</h2>
  <p>{kindLabel(job.kind)}</p>
  {(!job.kind||job.kind==='generate')&&job.spatial_tokens!==undefined&&<p>この生成：{job.spatial_tokens}トークン</p>}
- {job.kind==='refine'&&job.input_id&&<><p>入力動画（24fps正規化済み）</p><video controls src={'/api/video-inputs/'+job.input_id+'/preview'}/></>}
+ {job.kind==='refine'&&job.input_id&&<><p>入力動画（MP4正規化済み）</p><video controls src={'/api/video-inputs/'+job.input_id+'/preview'}/></>}
  {job.progress?.completed_chunks!==undefined&&<p>{job.progress.completed_chunks} / {job.progress.total_chunks} チャンク完了（デコード・保存は別工程）</p>}
  {job.elapsed_seconds!==undefined&&<p>経過：{Math.floor(job.elapsed_seconds/60)}分{job.elapsed_seconds%60}秒</p>}
  {job.progress?.step!==undefined&&job.progress.total_steps!==undefined&&<><progress value={job.progress.step} max={job.progress.total_steps}/><p>{job.progress.step} / {job.progress.total_steps} ステップ（{job.progress.percent}%）</p></>}

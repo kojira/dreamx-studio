@@ -98,6 +98,7 @@ class Supervisor:
                 image = work / 'normalized.mp4'
                 if (metadata['state'] != 'validated' or payload['recipe'] != RECIPE or payload['seed'] != 42
                         or payload['frames'] != metadata['normalized_frames']
+                        or payload.get('output_fps', 24) != metadata['normalized_fps']
                         or bool(payload['has_audio']) != bool(metadata['has_audio'])):
                     raise ValueError('Invalid Refiner input')
             else:
@@ -236,7 +237,7 @@ def main():
                 if op=='status':result=supervisor.status()
                 elif op=='submit':result=supervisor.submit(request['job_id'])
                 elif op=='cancel':result=supervisor.cancel(request['job_id'])
-                elif op=='validate_video':result=supervisor.video_validation.validate(request['input_id'])
+                elif op=='validate_video':result=supervisor.video_validation.validate(request['input_id'], request.get('output_fps', 24))
                 elif op=='cancel_validation':result=supervisor.video_validation.cancel(request['input_id'])
                 else:raise ValueError('Unknown operation')
             except ValidationFailure as exc:result={'error':exc.code}

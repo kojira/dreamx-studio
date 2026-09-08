@@ -22,5 +22,5 @@ class SocketRunner:
         except (OSError,RuntimeError,ValueError): return {'runtime_ready':False,'reason':'RUNNER_UNAVAILABLE'}
     def submit(self,job):return self.call('submit',job_id=job['id'])
     def cancel(self,job_id):return self.call('cancel',job_id=job_id)
-    def validate_video(self,input_id):return self.call('validate_video',timeout=85,input_id=input_id)
+    def validate_video(self,input_id,output_fps=24):return self.call('validate_video',timeout=85,input_id=input_id,output_fps=output_fps)
     def cancel_validation(self,input_id):return self.call('cancel_validation',input_id=input_id)

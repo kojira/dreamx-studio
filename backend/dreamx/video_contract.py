@@ -34,8 +34,12 @@ def rate(value):
         raise InvalidVideo() from None
 
 
+def output_rate(value):
+    return rate(str(number(value)))
+
+
 def padded_frames(frames):
-    if type(frames) is not int or not 6 <= frames <= 72:
+    if type(frames) is not int or frames < 1:
         raise InvalidVideo('INVALID_DURATION')
     return 4 * ((frames - 1 + 3) // 4) + 1
 
@@ -50,7 +54,7 @@ def output_geometry(width, height):
     return int(w), int(h), int((1920 - w) // 4 * 2), int((1080 - h) // 4 * 2)
 
 
-def probe_contract(probe):
+def probe_contract(probe, output_fps=OUTPUT_FPS, normalized=False):
     """Validate bounded metadata before decoding any frames.
 
     Full decode, MP4 data-reference checks and timestamp/CFR verification are
@@ -81,10 +85,10 @@ def probe_contract(probe):
             if number(side.get('rotation', 0)) != 0:
                 raise InvalidVideo('UNSUPPORTED_VIDEO')
         fps = rate(video['avg_frame_rate'])
-        if not 1 <= fps <= 60 or rate(video['r_frame_rate']) != fps:
+        if (not normalized and not 1 <= fps <= 60) or rate(video['r_frame_rate']) != fps:
             raise InvalidVideo('UNSUPPORTED_VIDEO')
         duration = number(video['duration'])
-        if not 0.25 <= duration <= 3.0:
+        if duration <= 0:
             raise InvalidVideo('INVALID_DURATION')
         start = number(video.get('start_time', 0))
         if audios:
@@ -93,7 +97,7 @@ def probe_contract(probe):
                 raise InvalidVideo('UNSUPPORTED_VIDEO')
             audio_start = number(audio.get('start_time', 0))
             audio_duration = number(audio['duration'])
-            if audio_duration <= 0 or abs(audio_start - start) >= 1 / OUTPUT_FPS or audio_start + audio_duration - start - duration > 1 / OUTPUT_FPS:
+            if audio_duration <= 0 or abs(audio_start - start) >= 1 / output_rate(output_fps) or audio_start + audio_duration - start - duration > 1 / output_rate(output_fps):
                 raise InvalidVideo('UNSUPPORTED_AUDIO_TIMING')
         return {'width': w, 'height': h, 'duration_seconds': duration,
                 'source_fps': float(fps), 'has_audio': bool(audios)}
@@ -101,17 +105,18 @@ def probe_contract(probe):
         raise InvalidVideo() from None
 
 
-def normalized_contract(probe, source):
-    metadata = probe_contract(probe)
+def normalized_contract(probe, source, output_fps=OUTPUT_FPS):
+    output_fps = output_rate(output_fps)
+    metadata = probe_contract(probe, output_fps, normalized=True)
     video = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-    if rate(video['avg_frame_rate']) != OUTPUT_FPS:
+    if rate(video['avg_frame_rate']) != output_fps:
         raise InvalidVideo('INVALID_VIDEO')
     try:
         frames = int(video['nb_read_frames'])
     except (KeyError, TypeError, ValueError):
         raise InvalidVideo() from None
     padded_frames(frames)
-    if abs(frames / OUTPUT_FPS - source['duration_seconds']) > 1 / OUTPUT_FPS + 1e-9:
+    if abs(frames / output_fps - source['duration_seconds']) > 1 / output_fps + 1e-9:
         raise InvalidVideo('INVALID_DURATION')
     if metadata['has_audio'] != source['has_audio']:
         raise InvalidVideo('INVALID_VIDEO')

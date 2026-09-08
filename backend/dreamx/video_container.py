@@ -5,6 +5,7 @@ from pathlib import Path
 from .docker_control import LABEL
 from .paths import id_path
 from .safety import GIB
+from .video_contract import output_rate
 
 VALIDATION_SECONDS = 60
 OPERATION_LABEL = 'org.dreamx.studio.operation'
@@ -20,7 +21,7 @@ def video_paths(app: Path, input_id: str):
     return raw, work
 
 
-def validation_command(app, input_id, image_id, user):
+def validation_command(app, input_id, image_id, user, output_fps=24):
     """Return create argv and exact allowed mounts; no user argv or filenames."""
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', image_id):
         raise ValueError('Expected pinned validator image')
@@ -42,7 +43,7 @@ def validation_command(app, input_id, image_id, user):
             '--log-opt', 'max-size=10m', '--log-opt', 'max-file=3']
     for typ, src, dest, writable in mounts:
         args += ['--mount', f'type={typ},src={src},dst={dest}' + ('' if writable else ',readonly')]
-    args.append(image_id)
+    args += ['--env', 'DREAMX_OUTPUT_FPS=' + str(float(output_rate(output_fps))), image_id]
     return args, mounts
 
 

@@ -8,7 +8,7 @@ import time
 from .docker_control import execute, inspect_job, kill_job
 from .jobs import Busy
 from .video_container import VALIDATION_SECONDS, validation_command, verify_validator, video_paths
-from .video_contract import number, padded_frames
+from .video_contract import number, padded_frames, output_rate
 
 
 class ValidationFailure(RuntimeError):
@@ -32,7 +32,8 @@ class VideoValidation:
                 return {'state': 'cancelling'}
             return {'state': self.jobs.video(input_id)['state']}
 
-    def validate(self, input_id):
+    def validate(self, input_id, output_fps=24):
+        output_fps = float(output_rate(output_fps))
         with self.lock:
             availability = self.status()
             if availability.get('reason') == 'BUSY':
@@ -48,7 +49,7 @@ class VideoValidation:
         failure = 'INVALID_VIDEO'
         try:
             user = f'{os.getuid()}:{os.getgid()}'
-            arguments, mounts = validation_command(self.app, input_id, self.image_id, user)
+            arguments, mounts = validation_command(self.app, input_id, self.image_id, user, output_fps)
             cid = execute(arguments).strip()
             # Persist identity before start so a runner restart cannot release a
             # live CPU validator merely because GPU active.json is empty.
@@ -93,16 +94,16 @@ class VideoValidation:
                     raise ValidationFailure('INVALID_VIDEO')
             if abs(metadata['width'] / metadata['height'] / (16 / 9) - 1) > .01:
                 raise ValidationFailure('INVALID_VIDEO')
-            if not .25 <= number(metadata['duration_seconds']) <= 3 or not 1 <= number(metadata['source_fps']) <= 60:
+            if number(metadata['duration_seconds']) <= 0 or not 1 <= number(metadata['source_fps']) <= 60:
                 raise ValidationFailure('INVALID_VIDEO')
-            if type(metadata['has_audio']) is not bool or metadata.get('normalized_fps') != 24:
+            if type(metadata['has_audio']) is not bool or metadata.get('normalized_fps') != output_fps:
                 raise ValidationFailure('INVALID_VIDEO')
             if any(not re.fullmatch('[0-9a-f]{64}', metadata[key]) for key in ('raw_sha256', 'normalized_sha256')):
                 raise ValidationFailure('INVALID_VIDEO')
             self.jobs.finish_video(input_id, metadata)
             result = {key: metadata[key] for key in ('width', 'height', 'duration_seconds', 'source_fps',
                                                     'normalized_frames', 'has_audio')}
-            result.update(input_id=input_id, normalized_fps=24)
+            result.update(input_id=input_id, normalized_fps=output_fps)
         except ValidationFailure as error:
             failure = error.code
             result = None

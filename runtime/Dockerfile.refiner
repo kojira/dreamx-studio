@@ -11,6 +11,9 @@ RUN python /opt/studio/patch_refiner_attention.py \
       /opt/dreamx/video_refiner/inference_sr.py /opt/studio/inference_sr.patched.py \
     && cp /opt/studio/attention.patched.py /opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py \
     && cp /opt/studio/inference_sr.patched.py /opt/dreamx/video_refiner/inference_sr.py
+COPY runtime/patch_refiner_fps.py /opt/studio/
+RUN python /opt/studio/patch_refiner_fps.py /opt/dreamx/video_refiner/inference_sr.py /opt/studio/inference_sr.fps.py \
+    && cp /opt/studio/inference_sr.fps.py /opt/dreamx/video_refiner/inference_sr.py
 COPY backend/dreamx/video_contract.py backend/dreamx/refiner_recipe.py /opt/studio/dreamx/
 COPY runtime/refiner_worker.py /opt/studio/refiner_worker.py
 ENV PYTHONPATH=/opt/refiner-deps USER=dreamx HOME=/tmp

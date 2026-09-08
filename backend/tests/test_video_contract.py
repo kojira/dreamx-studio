@@ -16,13 +16,30 @@ class VideoContractTests(unittest.TestCase):
     def test_padding_retains_all_original_frames(self):
         for n, p in ((6, 9), (24, 25), (68, 69), (69, 69), (72, 73)):
             self.assertEqual(padded_frames(n), p)
-        for n in range(6, 73):
+        for n in (1, 5, 6, 69, 72, 73, 450, 900, 1800, 100000):
             p = padded_frames(n)
             self.assertEqual(p % 4, 1)
             self.assertTrue(0 <= p - n <= 3)
-        for n in (5, 73, -1, 6.0, True):
+        for n in (0, -1, 6.0, True):
             with self.assertRaises(InvalidVideo):
                 padded_frames(n)
+
+    def test_duration_no_artificial_ceiling(self):
+        for duration in (0.1, 3.01, 15, 20, 30, 600):
+            probe = sample()
+            for stream in probe['streams']:
+                stream['duration'] = str(duration)
+            self.assertEqual(probe_contract(probe)['duration_seconds'], duration)
+
+    def test_selected_fps(self):
+        for fps, frames in ((30, 90), (60, 180), (120, 360), (0.5, 2), (29.97, 90)):
+            source = probe_contract(sample())
+            normalized = sample()
+            from fractions import Fraction
+            for stream in normalized['streams']:
+                stream['duration'] = str(frames / fps)
+            normalized['streams'][0].update(avg_frame_rate=str(Fraction(str(fps))), r_frame_rate=str(Fraction(str(fps))), nb_read_frames=str(frames))
+            self.assertEqual(normalized_contract(normalized, source, fps), frames)
 
     def test_geometry_matches_proven_source_and_centers_even_padding(self):
         self.assertEqual(output_geometry(1248, 704), (1914, 1080, 2, 0))
@@ -58,7 +75,7 @@ class VideoContractTests(unittest.TestCase):
                  {'tags': {'rotate': '90'}}, {'side_data_list': [{'rotation': 180}]},
                  {'avg_frame_rate': '30/1', 'r_frame_rate': '60/1'},
                  {'avg_frame_rate': '61/1', 'r_frame_rate': '61/1'},
-                 {'duration': '3.01'}, {'duration': '0.24'}, {'duration': 'nan'},
+                 {'duration': '0'}, {'duration': '-1'}, {'duration': 'nan'},
                  {'avg_frame_rate': '0/0'}]
         for changes in cases:
             with self.subTest(changes=changes):

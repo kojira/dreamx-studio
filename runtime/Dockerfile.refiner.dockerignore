@@ -7,4 +7,5 @@
 !runtime/refiner_worker.py
 !runtime/patch_refiner_attention.py
 !runtime/patch_refiner_audio.py
+!runtime/patch_refiner_fps.py
 !runtime/Dockerfile.refiner
