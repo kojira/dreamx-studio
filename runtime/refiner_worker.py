@@ -98,7 +98,9 @@ class Worker:
         refined = outputs[0]
         intermediate = self.probe(refined)
         video = next(s for s in intermediate['streams'] if s['codec_type'] == 'video')
-        if int(video['nb_read_frames']) != processing or (video['width'], video['height']) != (1920, 1088):
+        # Pinned upstream pads tensors to P, then writes video_out[:T_pixel].
+        # T_pixel is the original N, so processing padding is already removed.
+        if int(video['nb_read_frames']) != frames or (video['width'], video['height']) != (1920, 1088):
             raise ValueError('Refiner processing frame/size mismatch')
         self.run(final_command(refined, frames, spec['width'], spec['height'], spec['has_audio']))
         media = self.probe(self.job / 'output.mp4')
