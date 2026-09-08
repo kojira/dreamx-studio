@@ -44,7 +44,7 @@ Select **「動画を1080p化」**, choose a video, enter output fps, and press 
 - No structural media precheck, full pre-decode scan, redundant full output decode or CPU audio prehash. Only lightweight headers, one FFmpeg conversion and handoff checksums are used. Audio is stream-copied, so audio incompatible with MP4 can cause a conversion error.
 - Converted input preview, progress, cancellation, history and MP4 download remain available. MOV browser playback depends on its codecs and browser; the app previews the converted MP4.
 
-Long clips have not been GPU-validated and may exhaust resources. Existing CPU isolation/timeouts and GPU emergency stopping remain unchanged. CPU conversion and GPU jobs use the existing shared operation lease; cancellation releases it only after the exact container stops. Inputs/results are not automatically pruned.
+Videos longer than approximately5 seconds are split losslessly at frame boundaries, refined sequentially with one model load, then concatenated with original normalized audio. Clip tensors/caches are released after each saved segment; the final short segment is retained. Segment boundaries may flicker. Segmented GPU operation has not yet been verified and may still exhaust resources. Existing CPU isolation/timeouts and GPU emergency stopping remain unchanged. CPU conversion and GPU jobs use the existing shared operation lease; cancellation releases it only after the exact container stops. Inputs/results are not automatically pruned.
 
 Refiner processes4n+1 padded tensors; the pinned upstream removes only the added frames before writing its intermediate MP4. The final worker verifies the original normalized count. It does not repair mouth motion, remove speaking gestures or guarantee face/identity fidelity.
 
