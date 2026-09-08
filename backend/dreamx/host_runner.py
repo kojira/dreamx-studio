@@ -12,7 +12,8 @@ from pathlib import Path
 from .docker_control import inspect_job, kill_job, verify_limits, execute, configure_no_swap
 from .host_guard import atomic_json, load
 from .paths import id_path
-from .jobs import Jobs
+from .jobs import Jobs, Busy
+from .video_validation import VideoValidation, ValidationFailure
 from .safety import GIB, WORKER_LIMIT, Sample, admission, memory_available
 
 class Supervisor:
@@ -22,9 +23,20 @@ class Supervisor:
         self.jobs=Jobs(self.app/'jobs.sqlite');self.lock=threading.Lock();self.active=None;self.cancelled=threading.Event()
         self.config=load(root/'config.json')
         # Reconciliation is deliberately fail-closed, not an automatic broad stop.
-        if (self.control/'active.json').exists() and load(self.control/'active.json').get('container_id'):
-            raise RuntimeError('Previous worker requires exact-job reconciliation before startup')
+        previous = load(self.control/'active.json') if (self.control/'active.json').exists() else {}
+        operation = self.jobs.operation()
+        identities = []
+        if previous.get('container_id'):
+            identities.append((previous['container_id'], previous['job_id']))
+        if operation and operation.get('container_id'):
+            identities.append((operation['container_id'], operation['owner_id']))
+        for container_id, owner_id in identities:
+            if inspect_job(container_id, owner_id)['State']['Running']:
+                raise RuntimeError('Previous worker requires exact-job reconciliation before startup')
         self.jobs.recover_after_worker_reconciliation()
+        atomic_json(self.control/'active.json', {'container_id': None})
+        self.video_validation = VideoValidation(self.app, self.jobs, self.lock,
+                                               self.config.get('validator_image_id'), self.status)
         threading.Thread(target=self.heartbeat,daemon=True).start()
 
     def heartbeat(self):
@@ -32,22 +44,30 @@ class Supervisor:
             atomic_json(self.control/'runner-heartbeat.json',{'at':time.monotonic()})
             time.sleep(.5)
 
-    def status(self):
+    def status(self, owner_id=None):
         available=memory_available(Path('/proc/meminfo').read_text()); disk=shutil.disk_usage(self.root).free
         try:
             guard=load(self.control/'guard-status.json'); age=time.monotonic()-guard['at']
             healthy=not guard.get('reason')
         except Exception:age=999;healthy=False
         ready=self.config.get('validated',False) and healthy
-        reason=admission(Sample(available,disk,0,age),runtime_ready=ready,active=self.active is not None)
-        return {'runtime_ready':reason is None,'reason':reason,'available_gib':available/GIB,'active_job_id':self.active}
+        operation = self.jobs.operation()
+        busy = self.active is not None or (operation is not None and operation['owner_id'] != owner_id)
+        reason=admission(Sample(available,disk,0,age),runtime_ready=ready,active=busy)
+        return {'runtime_ready':reason is None,'reason':reason,'available_gib':available/GIB,
+                'active_job_id':self.active,
+                'active_kind':operation['kind'] if operation else None,
+                'video_validation_ready':bool(self.config.get('validator_image_id')) and reason is None}
 
     def submit(self,job_id):
         with self.lock:
-            status=self.status()
+            status=self.status(owner_id=job_id)
             if not status['runtime_ready']:raise RuntimeError(status['reason'])
             job=self.jobs.get(job_id)
+            operation = self.jobs.operation()
             if job['state']!='admitted':raise ValueError('Not admitted')
+            if not operation or operation['owner_id'] != job_id or operation['kind'] not in ('generate', 'refine'):
+                raise ValueError('Lease ownership mismatch')
             id_path(self.app/'jobs',job_id)
             self.active=job_id;self.cancelled.clear()
             threading.Thread(target=self.run,args=(job,),daemon=True).start()
@@ -83,6 +103,7 @@ class Supervisor:
                 args+=['--mount',f'type={typ},src={src},dst={dst}'+('' if rw else ',readonly')]
             args += [image_id,'python','/opt/worker.py']
             cid=execute(args).strip()
+            self.jobs.bind_container(job_id, cid)
             c=inspect_job(cid,job_id);verify_limits(c,expected_image_id=image_id,expected_mounts=mounts,expected_user=user)
             execute(['start',cid]);c=inspect_job(cid,job_id);pid=c['State']['Pid']
             if not c['State']['Running'] or pid<=0:raise RuntimeError('Worker failed to start')
@@ -150,12 +171,14 @@ class Supervisor:
                 if current not in ('succeeded','failed','cancelled','interrupted'):
                     self.jobs.transition(job_id,'failed',failure or 'WORKER_STOPPED')
                 atomic_json(self.control/'active.json',{'container_id':None})
-                with self.lock:self.active=None
+                with self.lock:
+                    self.jobs.release_stopped(job_id)
+                    self.active=None
 
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);args=p.parse_args()
-    os.umask(0o077);root=args.root.resolve();supervisor=Supervisor(root)
+    os.umask(0o077);root=args.root.resolve()
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             self.request.settimeout(5)
@@ -166,12 +189,17 @@ def main():
                 if op=='status':result=supervisor.status()
                 elif op=='submit':result=supervisor.submit(request['job_id'])
                 elif op=='cancel':result=supervisor.cancel(request['job_id'])
+                elif op=='validate_video':result=supervisor.video_validation.validate(request['input_id'])
+                elif op=='cancel_validation':result=supervisor.video_validation.cancel(request['input_id'])
                 else:raise ValueError('Unknown operation')
+            except ValidationFailure as exc:result={'error':exc.code}
+            except Busy:result={'error':'BUSY'}
             except Exception as exc:result={'error':type(exc).__name__}
             self.wfile.write(json.dumps(result).encode()+b'\n')
     socket_path=root/'control/runner.sock'
     # Never unlink an unknown/stale socket automatically; operator must reconcile.
     with socketserver.ThreadingUnixStreamServer(str(socket_path),Handler) as server:
+        supervisor=Supervisor(root)
         os.chmod(socket_path,0o600);server.serve_forever()
 
 if __name__=='__main__':main()

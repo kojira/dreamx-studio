@@ -1,5 +1,8 @@
 """Small same-origin trial API. Inference remains closed without a ready runner."""
+import asyncio
+import contextlib
 import json
+import uuid
 import secrets
 import time
 from datetime import datetime, timezone
@@ -11,16 +14,22 @@ from pydantic import BaseModel, Field, ConfigDict
 from .auth import Sessions, Unauthorized, RateLimited, check_origin
 from .inputs import ingest_image, id_path, InvalidImage, MAX_BYTES
 from .jobs import Jobs, Busy, Conflict
+from .video_contract import MAX_UPLOAD_BYTES
+from .video_container import video_paths
 
 class Runner(Protocol):
     def status(self) -> dict: ...
     def submit(self, job: dict) -> None: ...
     def cancel(self, job_id: str) -> None: ...
+    def validate_video(self, input_id: str) -> dict: ...
+    def cancel_validation(self, input_id: str) -> dict: ...
 
 class UnavailableRunner:
     def status(self): return {'runtime_ready':False,'reason':'RUNNER_NOT_READY','active_job_id':None}
     def submit(self,job): raise RuntimeError('Runner unavailable')
     def cancel(self,job_id): raise RuntimeError('Runner unavailable')
+    def validate_video(self,input_id): raise RuntimeError('RUNNER_NOT_READY')
+    def cancel_validation(self,input_id): raise RuntimeError('RUNNER_NOT_READY')
 
 class JobRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -104,6 +113,103 @@ def create_app(root: Path, secret: str|None=None, runner: Runner|None=None):
             data=await image.read(MAX_BYTES+1)
         try: return ingest_image(data,inputs)
         except InvalidImage as exc: raise HTTPException(422,str(exc))
+
+    @app.post('/api/video-inputs', status_code=201)
+    async def upload_video(request: Request):
+        availability = await asyncio.to_thread(runner.status)
+        if availability.get('reason') == 'BUSY' or jobs.operation():
+            raise HTTPException(409, 'BUSY')
+        if not availability.get('video_validation_ready'):
+            raise HTTPException(503, 'RUNNER_NOT_READY')
+        if request.headers.get('content-type', '').lower() != 'application/octet-stream':
+            raise HTTPException(422, 'EXPECTED_VIDEO_BYTES')
+        try:
+            declared = int(request.headers.get('content-length', '0'))
+            if declared < 0:
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(422, 'INVALID_REQUEST')
+        if declared > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, 'UPLOAD_TOO_LARGE')
+        identity = str(uuid.uuid4())
+        directory = id_path(root / 'video-inputs', identity)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        raw, work = video_paths(root, identity)
+        work.mkdir(mode=0o700)
+        jobs.reserve_upload(identity)
+        started = False
+        succeeded = False
+        validation = None
+        watcher = None
+        try:
+            size = 0
+            async with asyncio.timeout(120):
+                with raw.open('xb') as destination:
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        if size > MAX_UPLOAD_BYTES:
+                            raise HTTPException(413, 'UPLOAD_TOO_LARGE')
+                        await asyncio.to_thread(destination.write, chunk)
+            if not size:
+                raise HTTPException(422, 'INVALID_VIDEO')
+            started = True
+            validation = asyncio.create_task(asyncio.to_thread(runner.validate_video, identity))
+            # Observe errors even when the browser/server cancels this request.
+            validation.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+            async def disconnected():
+                while not await request.is_disconnected():
+                    await asyncio.sleep(.1)
+            watcher = asyncio.create_task(disconnected())
+            done, _ = await asyncio.wait((validation, watcher), return_when=asyncio.FIRST_COMPLETED)
+            if validation not in done:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(runner.cancel_validation, identity)
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(validation)
+                raise HTTPException(400, 'UPLOAD_CANCELLED')
+            result = validation.result()
+            succeeded = True
+            return result
+        except RuntimeError as error:
+            code = str(error)
+            status_code = 422
+            if code == 'BUSY':
+                status_code = 409
+            elif code in ('RUNNER_NOT_READY', 'STOP_UNCONFIRMED'):
+                status_code = 503
+            elif code not in ('INVALID_VIDEO', 'UNSUPPORTED_VIDEO', 'INVALID_DURATION',
+                              'UNSUPPORTED_AUDIO_TIMING', 'VALIDATION_TIMEOUT', 'VALIDATION_CANCELLED'):
+                code, status_code = 'RUNNER_NOT_READY', 503
+            raise HTTPException(status_code, code)
+        except TimeoutError:
+            raise HTTPException(503 if started else 408, 'RUNNER_NOT_READY' if started else 'UPLOAD_TIMEOUT')
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+            if started and not succeeded:
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(asyncio.to_thread(runner.cancel_validation, identity))
+                jobs.fail_video(identity)
+            # Never delete files after handing them to a host-owned container.
+            # Its lease survives this request until exact stop is confirmed.
+            if not started:
+                jobs.fail_video(identity)
+                if raw.is_file() and not raw.is_symlink():
+                    raw.unlink()  # Only this request's exclusive unfinished file.
+
+    @app.get('/api/video-inputs/{input_id}/preview')
+    def video_preview(input_id: str):
+        try:
+            row = jobs.video(input_id)
+            _, work = video_paths(root, input_id)
+        except (ValueError, KeyError):
+            raise HTTPException(404, 'NOT_FOUND')
+        if row['state'] != 'validated':
+            raise HTTPException(409, 'INPUT_NOT_READY')
+        path = work / 'normalized.mp4'
+        if path.is_symlink() or not path.is_file():
+            raise HTTPException(404, 'NOT_FOUND')
+        return FileResponse(path, media_type='video/mp4')
 
     @app.post('/api/jobs',status_code=202)
     async def create_job(request:Request):
