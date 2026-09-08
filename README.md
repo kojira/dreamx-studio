@@ -37,17 +37,14 @@ Open http://127.0.0.1:8780. No access key or login input is required. The page a
 Upload PNG/JPEG/WebP <=10MiB and16MP, enter prompt and optional seed, generate. The browser defaults to880 spatial tokens, with220/440/880 choices; API clients omitting the setting retain220. The trial produces69 frames at24fps (~2.875s),50 steps. Actual aspect ratio follows input; this is not a fixed landscape resolution. Cancel stops only the job. Files remain in dedicated storage and are not automatically cleaned.
 
 ## Standalone Refiner
-On the same page, select **「動画を1080p化」**. Upload a video, wait for validation, then select **「高解像度化」**. No image-generation step or prompt is required. Input preview, progress, cancellation, history and MP4 download are provided; silent inputs do not acquire nonexistent audio-download links.
+Select **「動画を1080p化」**, choose a video, enter output fps, and press **「高解像度化」**. File selection does not upload or run validation. The single action uploads, converts to MP4, and submits Refiner inference. Conversion/inference failures are shown beside the controls. No image-generation step or prompt is required.
 
-Initial supported inputs:
-- Self-contained MP4 or MOV with one H264/yuv420p video stream; up to100MiB. HEVC, ProRes and PCM are not currently supported. Validated previews use normalized MP4 even when the original MOV cannot play directly in the browser.
-- 256–1280px wide and144–720px high, square pixels, no rotation. No16:9 aspect requirement; final output is fitted/padded without cropping.
-- No duration or frame-count admission ceiling. Input average rate remains1–60fps; variable timing and nominal/average differences are normalized rather than rejected. Output is1920×1080 with a user-entered positive numeric fps (default24; fractional rates supported). Set fps before upload, or revalidate after changing it.
-- Optional AAC audio,1–2 channels, up to48kHz. Audio is copied, not re-encoded; unsupported timing offsets are rejected. Short audio never truncates the video.
+- MP4/MOV picker, up to100MiB. There is no duration/frame-count ceiling or independent codec/resolution/aspect/CFR admission check. FFmpeg attempts conversion; unsupported media produces an error.
+- Output is1920×1080 at a positive numeric fps (default24; fractional rates supported), fitted/padded without cropping. Changing fps invalidates the prepared input for the next action.
+- No structural media precheck, full pre-decode scan, redundant full output decode or CPU audio prehash. Only lightweight headers, one FFmpeg conversion and handoff checksums are used. Audio is stream-copied, so audio incompatible with MP4 can cause a conversion error.
+- Converted input preview, progress, cancellation, history and MP4 download remain available. MOV browser playback depends on its codecs and browser; the app previews the converted MP4.
 
-The remaining format bounds are limits of this UI implementation, not established universal model limits. Long clips are enabled without waiting for a long GPU trial, as requested; they have not been GPU-validated and may exhaust resources. Existing CPU isolation/timeouts and GPU emergency stopping remain unchanged. Portrait output is not implemented. MOV playback support itself depends on the browser and contained codecs; the app uses a normalized MP4 preview rather than assuming every MOV is unplayable.
-
-Validation and GPU jobs share one persistent operation lease. Interrupting an upload stops its connection; after validation begins the host retains its lease until the exact CPU container is confirmed stopped. Inputs/results are not automatically pruned.
+Long clips have not been GPU-validated and may exhaust resources. Existing CPU isolation/timeouts and GPU emergency stopping remain unchanged. CPU conversion and GPU jobs use the existing shared operation lease; cancellation releases it only after the exact container stops. Inputs/results are not automatically pruned.
 
 Refiner processes4n+1 padded tensors; the pinned upstream removes only the added frames before writing its intermediate MP4. The final worker verifies the original normalized count. It does not repair mouth motion, remove speaking gestures or guarantee face/identity fidelity.
 
