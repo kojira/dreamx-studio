@@ -11,12 +11,17 @@ from dreamx.paths import id_path
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);p.add_argument('--attention-patch',type=Path);p.add_argument('--target1080',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--source-job',required=True);p.add_argument('--attention-patch',type=Path);p.add_argument('--target1080',action='store_true');p.add_argument('--audio-patch',type=Path);a=p.parse_args()
+    if a.audio_patch:
+        assert a.target1080,'Audio patch trial is1080-only'
+        a.audio_patch=a.audio_patch.resolve()
+        assert hashlib.sha256(a.audio_patch.read_bytes()).hexdigest()=='cb146f455a515e0309927cde07d062206a8e7f014aa3d409a2697bb3d78ccd66','Unexpected audio patch'
     if a.target1080:assert a.attention_patch,'1080 trial requires the verified attention patch'
     if a.attention_patch:
         a.attention_patch=a.attention_patch.resolve()
         assert hashlib.sha256(a.attention_patch.read_bytes()).hexdigest()=='9104decd2574690d397438e59eaf87e54e1bd6c2c695adfc0c45c01b06a14ab7','Unexpected attention patch'
     trial='v1.10-1080-sdpa' if a.target1080 else ('v1.11-sdpa' if a.attention_patch else 'v1.11')
+    if a.audio_patch:trial='v1.12-1080-audio'
     root=a.root.resolve();os.umask(0o077);jobs=Jobs(root/'app/jobs.sqlite')
     source_job=jobs.get(a.source_job);assert source_job['state']=='succeeded'
     source=id_path(root/'app/jobs',a.source_job)/'output.mp4'
@@ -48,6 +53,8 @@ def main():
         if a.attention_patch:
             mounts.append(('bind',str(a.attention_patch),'/opt/dreamx/video_refiner/wan/modules/sr_dit/attention.py',False))
             mounts.append(('bind',str(root/'build/check_refiner_attention.py'),'/opt/check_refiner_attention.py',False))
+        if a.audio_patch:
+            mounts.append(('bind',str(a.audio_patch),'/opt/dreamx/video_refiner/inference_sr.py',False))
         args=['create','--name','dreamx-refiner-test-'+jid,'--label','org.dreamx.studio.job='+jid,'--restart','no','--memory',str(WORKER_LIMIT),'--memory-swap',str(WORKER_LIMIT),'--cpus','8','--pids-limit','512','--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges','--log-opt','max-size=10m','--log-opt','max-file=3']
         for env in ['USER=dreamx','HOME=/tmp','PYTHONPATH=/deps','TORCHINDUCTOR_CACHE_DIR=/tmp/dreamx-inductor','HF_HUB_OFFLINE=1','TRANSFORMERS_OFFLINE=1']:
             args+=['--env',env]
