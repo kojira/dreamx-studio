@@ -1,0 +1,12 @@
+**
+!backend/
+!backend/dreamx/
+!backend/dreamx/video_contract.py
+!backend/dreamx/refiner_recipe.py
+!runtime/
+!runtime/refiner_worker.py
+!runtime/patch_refiner_attention.py
+!runtime/patch_refiner_audio.py
+!runtime/patch_refiner_fps.py
+!runtime/patch_refiner_segments.py
+!runtime/Dockerfile.refiner

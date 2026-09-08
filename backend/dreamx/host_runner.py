@@ -12,7 +12,11 @@ from pathlib import Path
 from .docker_control import inspect_job, kill_job, verify_limits, execute, configure_no_swap
 from .host_guard import atomic_json, load
 from .paths import id_path
-from .jobs import Jobs
+from .jobs import Jobs, Busy
+from .video_validation import VideoValidation, ValidationFailure
+from .video_container import video_paths
+from .video_contract import RECIPE
+import hashlib
 from .safety import GIB, WORKER_LIMIT, Sample, admission, memory_available
 
 class Supervisor:
@@ -22,9 +26,20 @@ class Supervisor:
         self.jobs=Jobs(self.app/'jobs.sqlite');self.lock=threading.Lock();self.active=None;self.cancelled=threading.Event()
         self.config=load(root/'config.json')
         # Reconciliation is deliberately fail-closed, not an automatic broad stop.
-        if (self.control/'active.json').exists() and load(self.control/'active.json').get('container_id'):
-            raise RuntimeError('Previous worker requires exact-job reconciliation before startup')
+        previous = load(self.control/'active.json') if (self.control/'active.json').exists() else {}
+        operation = self.jobs.operation()
+        identities = []
+        if previous.get('container_id'):
+            identities.append((previous['container_id'], previous['job_id']))
+        if operation and operation.get('container_id'):
+            identities.append((operation['container_id'], operation['owner_id']))
+        for container_id, owner_id in identities:
+            if inspect_job(container_id, owner_id)['State']['Running']:
+                raise RuntimeError('Previous worker requires exact-job reconciliation before startup')
         self.jobs.recover_after_worker_reconciliation()
+        atomic_json(self.control/'active.json', {'container_id': None})
+        self.video_validation = VideoValidation(self.app, self.jobs, self.lock,
+                                               self.config.get('validator_image_id'), self.status)
         threading.Thread(target=self.heartbeat,daemon=True).start()
 
     def heartbeat(self):
@@ -32,22 +47,33 @@ class Supervisor:
             atomic_json(self.control/'runner-heartbeat.json',{'at':time.monotonic()})
             time.sleep(.5)
 
-    def status(self):
+    def status(self, owner_id=None):
         available=memory_available(Path('/proc/meminfo').read_text()); disk=shutil.disk_usage(self.root).free
         try:
             guard=load(self.control/'guard-status.json'); age=time.monotonic()-guard['at']
             healthy=not guard.get('reason')
         except Exception:age=999;healthy=False
         ready=self.config.get('validated',False) and healthy
-        reason=admission(Sample(available,disk,0,age),runtime_ready=ready,active=self.active is not None)
-        return {'runtime_ready':reason is None,'reason':reason,'available_gib':available/GIB,'active_job_id':self.active}
+        operation = self.jobs.operation()
+        busy = self.active is not None or (operation is not None and operation['owner_id'] != owner_id)
+        reason=admission(Sample(available,disk,0,age),runtime_ready=ready,active=busy)
+        return {'runtime_ready':reason is None,'reason':reason,'available_gib':available/GIB,
+                'active_job_id':self.active,
+                'active_kind':operation['kind'] if operation else None,
+                'video_validation_ready':bool(self.config.get('validator_image_id')) and reason is None,
+                'refiner_ready':bool(self.config.get('refiner_image_id') and self.config.get('refiner_enabled')) and reason is None}
 
     def submit(self,job_id):
         with self.lock:
-            status=self.status()
+            status=self.status(owner_id=job_id)
             if not status['runtime_ready']:raise RuntimeError(status['reason'])
             job=self.jobs.get(job_id)
+            operation = self.jobs.operation()
             if job['state']!='admitted':raise ValueError('Not admitted')
+            if not operation or operation['owner_id'] != job_id or operation['kind'] not in ('generate', 'refine'):
+                raise ValueError('Lease ownership mismatch')
+            if operation['kind'] == 'refine' and not status.get('refiner_ready'):
+                raise RuntimeError('RUNNER_NOT_READY')
             id_path(self.app/'jobs',job_id)
             self.active=job_id;self.cancelled.clear()
             threading.Thread(target=self.run,args=(job,),daemon=True).start()
@@ -63,16 +89,33 @@ class Supervisor:
         job_id=job['id'];cid=None;failure=None
         try:
             self.jobs.transition(job_id,'preparing')
-            payload=json.loads(job['payload']);image=id_path(self.app/'inputs',payload['input_id'],'.png')
-            if not image.is_file():raise ValueError('Input missing')
+            payload=json.loads(job['payload'])
+            refining = payload.get('kind') == 'refine'
+            metadata = None
+            if refining:
+                metadata = self.jobs.video(payload['input_id'])
+                _, work = video_paths(self.app, payload['input_id'])
+                image = work / 'normalized.mp4'
+                if (metadata['state'] != 'validated' or payload['recipe'] != RECIPE or payload['seed'] != 42
+                        or payload['frames'] != metadata['normalized_frames']
+                        or payload.get('output_fps', 24) != metadata['normalized_fps']
+                        or bool(payload['has_audio']) != bool(metadata['has_audio'])):
+                    raise ValueError('Invalid Refiner input')
+            else:
+                image=id_path(self.app/'inputs',payload['input_id'],'.png')
+            if image.is_symlink() or not image.is_file():raise ValueError('Input missing')
             output=id_path(self.app/'jobs',job_id);output.mkdir(mode=0o700,parents=True,exist_ok=False)
             seed=payload.get('seed');seed=secrets.randbelow(2147483648) if seed is None else seed
             spec={**payload,'seed':seed,'job_id':job_id}
+            if refining:
+                spec.update(width=metadata['width'], height=metadata['height'], normalized_sha256=metadata['normalized_sha256'])
             atomic_json(output/'spec.json',spec)
-            image_id=self.config['image_id'];user=f'{os.getuid()}:{os.getgid()}'
-            mounts=[('bind',str(self.root/'weights'),'/weights',False),('bind',str(image),'/input.png',False),
-                    ('bind',str(output),'/job',True),('bind',str(self.control),'/control',False),
-                    ('bind',str(self.root/'build/worker.py'),'/opt/worker.py',False)]
+            image_id=self.config['refiner_image_id' if refining else 'image_id'];user=f'{os.getuid()}:{os.getgid()}'
+            mounts=[('bind',str(self.root/'weights'),'/opt/dreamx/checkpoints' if refining else '/weights',False),
+                    ('bind',str(image),'/input.mp4' if refining else '/input.png',False),
+                    ('bind',str(output),'/job',True),('bind',str(self.control),'/control',False)]
+            if not refining:
+                mounts.append(('bind',str(self.root/'build/worker.py'),'/opt/worker.py',False))
             args=['create','--name','dreamx-job-'+job_id,'--label','org.dreamx.studio.job='+job_id,
                   '--restart','no','--memory',str(WORKER_LIMIT),'--memory-swap',str(WORKER_LIMIT),'--cpus','8','--pids-limit','512',
                   '--network','none','--gpus','all','--user',user,'--cap-drop','ALL','--security-opt','no-new-privileges',
@@ -81,8 +124,9 @@ class Supervisor:
                   '--log-opt','max-size=10m','--log-opt','max-file=3']
             for typ,src,dst,rw in mounts:
                 args+=['--mount',f'type={typ},src={src},dst={dst}'+('' if rw else ',readonly')]
-            args += [image_id,'python','/opt/worker.py']
+            args += [image_id,'python','/opt/studio/refiner_worker.py' if refining else '/opt/worker.py']
             cid=execute(args).strip()
+            self.jobs.bind_container(job_id, cid)
             c=inspect_job(cid,job_id);verify_limits(c,expected_image_id=image_id,expected_mounts=mounts,expected_user=user)
             execute(['start',cid]);c=inspect_job(cid,job_id);pid=c['State']['Pid']
             if not c['State']['Running'] or pid<=0:raise RuntimeError('Worker failed to start')
@@ -113,12 +157,37 @@ class Supervisor:
             if c['State']['OOMKilled']:failure='WORKER_OOM';raise RuntimeError(failure)
             if c['State']['ExitCode']!=0:
                 failure='INFERENCE_FAILED'
+                if refining:
+                    try:
+                        reported = load(output/'worker-error.json').get('error')
+                        if reported in ('INFERENCE_FAILED', 'OUTPUT_VALIDATION_FAILED'):
+                            failure = reported
+                    except (OSError, ValueError):
+                        pass
                 try:
                     aborted=load(self.control/'last-abort.json')
                     if aborted.get('container_id')==cid and c['State']['ExitCode'] in (137,143):failure=aborted['reason']
                 except (OSError,ValueError):pass
                 raise RuntimeError(failure)
             self.jobs.transition(job_id,'muxing')
+            if refining:
+                failure = 'OUTPUT_VALIDATION_FAILED'
+                receipt = output/'refiner-evidence.json'
+                video = output/'output.mp4'
+                if receipt.is_symlink() or receipt.stat().st_size > 1024 * 1024 or video.is_symlink() or not video.is_file():
+                    raise ValueError('Invalid Refiner artifacts')
+                evidence = load(receipt)
+                if evidence['recipe'] != RECIPE or evidence['frames'] != payload['frames'] or evidence['source_sha256'] != metadata['normalized_sha256']:
+                    raise ValueError('Refiner evidence mismatch')
+                digest = hashlib.sha256()
+                with video.open('rb') as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b''):
+                        digest.update(block)
+                if digest.hexdigest() != evidence['output_sha256']:
+                    raise ValueError('Refiner artifact changed')
+                atomic_json(output/'evidence.json', {**evidence, 'image_id': image_id, 'seed': seed})
+                self.jobs.transition(job_id, 'succeeded')
+                return
             media=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(output/'output.mp4')],text=True,timeout=15))
             types={s['codec_type'] for s in media['streams']}
             if not {'audio','video'}<=types:raise ValueError('Missing audio or video')
@@ -150,12 +219,14 @@ class Supervisor:
                 if current not in ('succeeded','failed','cancelled','interrupted'):
                     self.jobs.transition(job_id,'failed',failure or 'WORKER_STOPPED')
                 atomic_json(self.control/'active.json',{'container_id':None})
-                with self.lock:self.active=None
+                with self.lock:
+                    self.jobs.release_stopped(job_id)
+                    self.active=None
 
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);args=p.parse_args()
-    os.umask(0o077);root=args.root.resolve();supervisor=Supervisor(root)
+    os.umask(0o077);root=args.root.resolve()
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             self.request.settimeout(5)
@@ -166,12 +237,17 @@ def main():
                 if op=='status':result=supervisor.status()
                 elif op=='submit':result=supervisor.submit(request['job_id'])
                 elif op=='cancel':result=supervisor.cancel(request['job_id'])
+                elif op=='validate_video':result=supervisor.video_validation.validate(request['input_id'], request.get('output_fps', 24))
+                elif op=='cancel_validation':result=supervisor.video_validation.cancel(request['input_id'])
                 else:raise ValueError('Unknown operation')
+            except ValidationFailure as exc:result={'error':exc.code}
+            except Busy:result={'error':'BUSY'}
             except Exception as exc:result={'error':type(exc).__name__}
             self.wfile.write(json.dumps(result).encode()+b'\n')
     socket_path=root/'control/runner.sock'
     # Never unlink an unknown/stale socket automatically; operator must reconcile.
     with socketserver.ThreadingUnixStreamServer(str(socket_path),Handler) as server:
+        supervisor=Supervisor(root)
         os.chmod(socket_path,0o600);server.serve_forever()
 
 if __name__=='__main__':main()

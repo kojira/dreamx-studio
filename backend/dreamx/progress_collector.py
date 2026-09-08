@@ -26,7 +26,7 @@ def main():
                     if progress.get('phase')=='preparing':
                         try:
                             previous=json.loads((output/'progress.json').read_text())
-                            if previous.get('phase') in ('generating','encoding_output'):
+                            if previous.get('phase') in ('generating','encoding_output','refining','decoding','muxing'):
                                 progress=previous
                         except (OSError,ValueError):pass
                     progress['at']=time.time()

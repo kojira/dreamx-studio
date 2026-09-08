@@ -1,0 +1,9 @@
+# CPU-only input validation; no models, GPU runtime or web dependencies.
+FROM python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt
+COPY backend/dreamx/video_contract.py /opt/dreamx/video_contract.py
+COPY runtime/video_validator.py /opt/video_validator.py
+USER 1000:1000
+ENTRYPOINT ["python", "/opt/video_validator.py"]
